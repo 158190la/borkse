@@ -52,6 +52,16 @@ def run_async(coro):
     return result
 
 
+# ── OPTIONS preflight ────────────────────────────────────
+@app.route('/', defaults={'path': ''}, methods=['OPTIONS'])
+@app.route('/<path:path>', methods=['OPTIONS'])
+def options_handler(path=''):
+    response = app.make_default_options_response()
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+    return response
+
 # ── /health ───────────────────────────────────────────────
 @app.route('/health', methods=['GET'])
 def health():
