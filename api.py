@@ -50,7 +50,6 @@ def run_async(coro):
 def health():
     return jsonify({'status': 'ok', 'service': 'borkse-api'})
 
-
 # ── /scrape ───────────────────────────────────────────────
 @app.route('/scrape', methods=['GET', 'POST'])
 def scrape():
