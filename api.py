@@ -416,37 +416,35 @@ def api_fci_ficha():
 
 @app.route('/api/fci/historico', methods=['GET'])
 def api_fci_historico():
-    """
-    Serie historica de VCP para el grafico.
-    Descarga Excels de ~25 fechas entre desde y hasta.
-    Parametros: ?nombre=<nombre exacto>&desde=YYYY-MM-DD&hasta=YYYY-MM-DD
-    """
-    nombre_q = request.args.get('nombre', '').strip()
-    from_d   = request.args.get('desde', '').strip()
-    to_d     = request.args.get('hasta', '').strip()
-    if not nombre_q or not from_d or not to_d:
-        return jsonify({'ok': False, 'msg': 'nombre desde hasta requeridos'}), 400
+    nombre_q = request.args.get("nombre", "").strip()
+    fid_s    = request.args.get("fondo", "").strip()
+    from_d   = request.args.get("desde", "").strip()
+    to_d     = request.args.get("hasta", "").strip()
+    if not from_d or not to_d:
+        return jsonify({"ok": False, "msg": "desde y hasta requeridos"}), 400
+    if not nombre_q and not fid_s:
+        return jsonify({"ok": False, "msg": "nombre o fondo requerido"}), 400
     try:
         from datetime import date, timedelta
-        y0, m0, d0 = from_d.split('-')
-        y1, m1, d1 = to_d.split('-')
-        start = date(int(y0), int(m0), int(d0))
-        end   = date(int(y1), int(m1), int(d1))
-        delta = (end - start).days
-        step  = max(1, delta // 25)
+        if not nombre_q and fid_s:
+            fid = int(fid_s)
+            for fd in _load_today().values():
+                if fd["fondoId"] == fid:
+                    nombre_q = fd["nombre"]
+                    break
+        if not nombre_q:
+            return jsonify({"ok": False, "msg": "Fondo no encontrado"}), 404
+        y0,m0,d0 = from_d.split("-"); y1,m1,d1 = to_d.split("-")
+        start = date(int(y0),int(m0),int(d0)); end = date(int(y1),int(m1),int(d1))
+        step = max(1,(end-start).days//25)
+        series=[]; d=start
+        while d<=end:
+            vcps=_vcps_at(d); vcp=vcps.get(nombre_q)
+            if vcp: series.append({"fecha":d.strftime("%Y-%m-%d"),"vcp":vcp})
+            d+=timedelta(days=step)
+        return jsonify({"ok":True,"data":series})
+    except Exception as e: return jsonify({"ok":False,"msg":str(e)}),500
 
-        series = []
-        d = start
-        while d <= end:
-            vcps = _vcps_at(d)
-            vcp = vcps.get(nombre_q)
-            if vcp:
-                series.append({'fecha': d.strftime('%Y-%m-%d'), 'vcp': vcp})
-            d += timedelta(days=step)
-
-        return jsonify({'ok': True, 'data': series})
-    except Exception as e:
-        return jsonify({'ok': False, 'msg': str(e)}), 500
 
 
 @app.route('/api/fci/debug', methods=['GET'])
