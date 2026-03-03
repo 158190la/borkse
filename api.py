@@ -324,85 +324,155 @@ def _calc_rendimientos_cached(nombre, vcp_hoy):
 
 _GS_SHEET_NAME = 'FCI Historico'
 _GS_WS_NAME    = 'vcps'
-_GS_CACHE      = {}   # {'rows': [...], 'ts': float}
+_GS_CLIENT_CACHE = {}   # {'client': ..., 'ws': ..., 'ts': float}
+_GS_DATA_CACHE   = {}   # {'header': [...], 'rows': [...], 'ts': float}
 
-def _gs_get_ws():
-    """Abre o crea el worksheet de VCPs en el Google Sheet principal."""
-    ensure_credentials()
+def _gs_client():
+    """Retorna gspread client autenticado, cacheado 1h."""
+    import time
     import gspread
     from oauth2client.service_account import ServiceAccountCredentials
+    now = time.time()
+    if _GS_CLIENT_CACHE.get('ts', 0) and now - _GS_CLIENT_CACHE['ts'] < 3600:
+        return _GS_CLIENT_CACHE['client']
+    ensure_credentials()
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     creds = ServiceAccountCredentials.from_json_keyfile_name('credentials.json', scope)
     client = gspread.authorize(creds)
-    # Abrir spreadsheet existente (el mismo que usa dashboard.py)
-    import json
-    creds_data = json.loads(open('credentials.json').read())
-    # Buscar spreadsheet por nombre
+    _GS_CLIENT_CACHE['client'] = client
+    _GS_CLIENT_CACHE['ts'] = now
+    return client
+
+def _gs_get_ws():
+    """Abre o crea el worksheet pivot (fechas x fondos)."""
+    client = _gs_client()
     try:
         sh = client.open(_GS_SHEET_NAME)
     except Exception:
         sh = client.create(_GS_SHEET_NAME)
+        # Compartir con cualquiera que tenga el link (lectura)
         sh.share('', perm_type='anyone', role='reader')
-    # Abrir o crear worksheet
     try:
         ws = sh.worksheet(_GS_WS_NAME)
     except Exception:
-        ws = sh.add_worksheet(_GS_WS_NAME, rows=50000, cols=3)
-        ws.append_row(['fecha', 'nombre', 'vcp'])
+        # Crear con suficientes filas/cols: 5000 dias x 4000 fondos
+        ws = sh.add_worksheet(_GS_WS_NAME, rows=5000, cols=4000)
     return ws
 
 def _gs_write_snapshot():
     """
-    Escribe el VCP de hoy para todos los fondos en Google Sheets.
-    Solo escribe fechas nuevas (no duplica).
+    Estructura pivot: fila 1 = header [fecha, fondo1, fondo2, ...]
+                      fila 2+ = [YYYY-MM-DD, vcp1, vcp2, ...]
+
+    Logica:
+    1. Lee el header actual (fila 1)
+    2. Si no existe, lo crea con todos los fondos de hoy
+    3. Si hay fondos nuevos, los agrega al final del header
+    4. Construye la fila de hoy y la appendea
+    5. Si ya existe la fecha de hoy, no hace nada
     """
     from datetime import date
     today = date.today().strftime('%Y-%m-%d')
+
     fondos = _load_ad('ultimo')
     if not fondos:
-        return 0, 'No se pudo cargar fondos'
+        return 0, 'No se pudo cargar fondos de ArgentinaDatos'
+
+    ws = _gs_get_ws()
+
+    # Leer header y fechas existentes de una sola vez (mas eficiente)
+    # Lee solo las primeras 2 columnas para chequear fechas, y fila 1 para header
     try:
-        ws = _gs_get_ws()
-        # Verificar si ya existe hoy
-        all_vals = ws.col_values(1)  # columna fecha
-        if today in all_vals:
-            return 0, f'Ya existe snapshot para {today}'
-        # Preparar batch de filas
-        rows = [[today, f['nombre'], f['vcp']] for f in fondos.values() if f.get('vcp')]
-        # Escribir en batches de 500
-        for i in range(0, len(rows), 500):
-            ws.append_rows(rows[i:i+500], value_input_option='RAW')
-        return len(rows), 'ok'
-    except Exception as e:
-        return 0, str(e)
+        header_row = ws.row_values(1)
+    except Exception:
+        header_row = []
+
+    # Verificar si ya existe snapshot de hoy
+    if header_row:
+        try:
+            fecha_col = ws.col_values(1)
+            if today in fecha_col:
+                return 0, f'Ya existe snapshot para {today}'
+        except Exception:
+            pass
+
+    # Construir lista ordenada de nombres de fondos actuales
+    nombres_hoy = {f['nombre']: f['vcp'] for f in fondos.values() if f.get('vcp') is not None}
+
+    if not header_row:
+        # Primera vez: crear header
+        header = ['fecha'] + sorted(nombres_hoy.keys())
+        ws.update('A1', [header])
+        header_row = header
+
+    # Detectar fondos nuevos que no estan en el header
+    fondos_en_header = set(header_row[1:])
+    fondos_nuevos = [n for n in sorted(nombres_hoy.keys()) if n not in fondos_en_header]
+    if fondos_nuevos:
+        # Extender el header con los fondos nuevos
+        new_header = header_row + fondos_nuevos
+        ws.update('A1', [new_header])
+        header_row = new_header
+
+    # Construir fila de hoy: [fecha, vcp_col1, vcp_col2, ...]
+    fila = [today] + [nombres_hoy.get(nombre, '') for nombre in header_row[1:]]
+
+    # Append
+    ws.append_row(fila, value_input_option='RAW')
+
+    # Invalidar cache de datos
+    _GS_DATA_CACHE.clear()
+
+    return len(nombres_hoy), 'ok'
 
 def _gs_read_series(nombre, desde, hasta):
     """
-    Lee la serie histórica de VCP para un fondo desde Google Sheets.
-    Cachea 1h.
+    Lee serie historica [{fecha, vcp}] para un fondo desde el Sheet pivot.
+    Cachea todos los datos del sheet por 1h para no hacer multiples lecturas.
     """
     import time
     now = time.time()
-    cache_key = nombre.lower()
-    cached = _GS_CACHE.get(cache_key)
-    if cached and now - cached['ts'] < 3600:
-        return cached['rows']
-    try:
-        ws = _gs_get_ws()
-        # Leer todas las filas de este fondo en el rango de fechas
-        # Para eficiencia: leer todo y filtrar en Python
-        all_rows = ws.get_all_values()
-        nl = nombre.lower()
-        series = [
-            {'fecha': r[0], 'vcp': float(r[2])}
-            for r in all_rows[1:]  # skip header
-            if len(r) >= 3 and r[1].lower() == nl and desde <= r[0] <= hasta
-        ]
-        series.sort(key=lambda x: x['fecha'])
-        _GS_CACHE[cache_key] = {'rows': series, 'ts': now}
-        return series
-    except Exception as e:
+
+    # Cache de todos los datos del sheet
+    if not _GS_DATA_CACHE or now - _GS_DATA_CACHE.get('ts', 0) > 3600:
+        try:
+            ws = _gs_get_ws()
+            all_data = ws.get_all_values()
+            if not all_data or len(all_data) < 2:
+                _GS_DATA_CACHE.update({'header': [], 'rows': [], 'ts': now})
+            else:
+                _GS_DATA_CACHE.update({
+                    'header': all_data[0],
+                    'rows':   all_data[1:],
+                    'ts':     now,
+                })
+        except Exception as e:
+            return []
+
+    header = _GS_DATA_CACHE.get('header', [])
+    rows   = _GS_DATA_CACHE.get('rows', [])
+
+    if not header or nombre not in header:
         return []
+
+    col_idx = header.index(nombre)
+
+    series = []
+    for row in rows:
+        if len(row) <= col_idx:
+            continue
+        fecha = row[0]
+        if not (desde <= fecha <= hasta):
+            continue
+        val = row[col_idx]
+        if val == '':
+            continue
+        try:
+            series.append({'fecha': fecha, 'vcp': float(val)})
+        except Exception:
+            continue
+
+    return series
 
 
 
