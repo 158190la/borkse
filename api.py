@@ -422,30 +422,42 @@ def api_fci_historico():
 
 @app.route('/api/fci/debug', methods=['GET'])
 def api_fci_debug():
-    """Test rápido de ArgentinaDatos FCI API."""
+    """Muestra primeros fondos CON vcp != null de cada tipo, y prueba formato fecha historica."""
     from datetime import date, timedelta
     results = {}
-    tests = [
-        ('ultimo',     f'{_AD_BASE}/mercadoDinero/ultimo'),
-        ('rentaFija',  f'{_AD_BASE}/rentaFija/ultimo'),
-        ('fecha_mes',  f'{_AD_BASE}/mercadoDinero/{(date.today()-timedelta(days=30)).strftime("%Y/%m/%d")}'),
-    ]
-    for label, url in tests:
+    base = 'https://api.argentinadatos.com/v1/finanzas/fci'
+    tipos = ['mercadoDinero', 'rentaFija', 'rentaVariable', 'rentaMixta']
+    for tipo in tipos:
+        try:
+            r = req.get(f'{base}/{tipo}/ultimo', timeout=10, headers=_AD_H)
+            items = r.json() if r.status_code == 200 else []
+            if isinstance(items, list):
+                with_vcp = [it for it in items if it.get('vcp') is not None]
+                results[tipo] = {
+                    'total': len(items),
+                    'with_vcp': len(with_vcp),
+                    'sample_vcp': with_vcp[:3],
+                    'sample_raw': items[:2],
+                }
+            else:
+                results[tipo] = {'raw': items}
+        except Exception as e:
+            results[tipo] = {'error': str(e)}
+    # Probar fecha historica en formato YYYY-MM-DD (como la doc indica date format)
+    d30 = (date.today() - timedelta(days=30)).strftime('%Y-%m-%d')
+    for label, url in [
+        ('hist_dash',  f'{base}/mercadoDinero/{d30}'),
+        ('hist_slash', f'{base}/mercadoDinero/{d30.replace("-","/")}'),
+    ]:
         try:
             r = req.get(url, timeout=10, headers=_AD_H)
             items = r.json() if r.status_code == 200 else []
-            results[label] = {
-                'status': r.status_code,
-                'count': len(items) if isinstance(items, list) else 0,
-                'sample': items[:2] if isinstance(items, list) else items,
-            }
+            with_vcp = [it for it in items if isinstance(items, list) and it.get('vcp') is not None]
+            results[label] = {'url': url, 'status': r.status_code, 'total': len(items) if isinstance(items,list) else 0, 'with_vcp': len(with_vcp), 'sample': with_vcp[:2]}
         except Exception as e:
-            results[label] = {'error': str(e)}
+            results[label] = {'url': url, 'error': str(e)}
     return jsonify({'ok': True, 'results': results})
 
-
-
-@app.route('/api/treasury', methods=['GET'])
 def api_treasury():
     try:
         from dashboard import fetch_treasury_yields
