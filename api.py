@@ -106,40 +106,110 @@ def api_bonds():
 
 
 # ── /api/parte ────────────────────────────────────────────
+def fetch_market_data():
+    """Obtiene datos reales de mercado desde Yahoo Finance y otras fuentes públicas."""
+    import requests, json
+    from datetime import datetime
+
+    data = {}
+
+    # Tickers a consultar via Yahoo Finance
+    tickers = {
+        'SP500':   '^GSPC',
+        'NASDAQ':  '^IXIC',
+        'DOW':     '^DJI',
+        'VIX':     '^VIX',
+        'MERVAL':  '^MERV',
+        'BRENT':   'BZ=F',
+        'WTI':     'CL=F',
+        'GOLD':    'GC=F',
+        'DXY':     'DX-Y.NYB',
+        'UST2Y':   '^IRX',
+        'UST10Y':  '^TNX',
+        'NATGAS':  'NG=F',
+        'BTC':     'BTC-USD',
+    }
+
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    results = {}
+
+    for name, ticker in tickers.items():
+        try:
+            url = f'https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=2d'
+            r = requests.get(url, headers=headers, timeout=8)
+            d = r.json()
+            meta = d['chart']['result'][0]['meta']
+            price = meta.get('regularMarketPrice', meta.get('previousClose', 0))
+            prev  = meta.get('previousClose', price)
+            chg   = ((price - prev) / prev * 100) if prev else 0
+            results[name] = {'price': round(price, 2), 'chg': round(chg, 2)}
+        except Exception:
+            results[name] = {'price': 'N/D', 'chg': 0}
+
+    return results
+
+
 @app.route('/api/parte', methods=['GET', 'POST'])
 def api_parte():
     """
-    Llama a la API de Anthropic desde el servidor (evita CORS)
-    y devuelve el parte diario en JSON.
+    Busca datos reales de mercado y luego llama a Claude para generar
+    el parte diario fundamentado en cifras reales.
     """
     try:
-        import anthropic
+        import anthropic, json
         from datetime import datetime
 
         fecha = datetime.now().strftime('%A %d de %B de %Y')
 
+        # 1. Obtener datos reales
+        mkt = fetch_market_data()
+
+        def fmt(k):
+            v = mkt.get(k, {})
+            p = v.get('price', 'N/D')
+            c = v.get('chg', 0)
+            signo = '+' if c > 0 else ''
+            return f"{p} ({signo}{c}%)"
+
+        market_context = f"""
+DATOS DE MERCADO EN TIEMPO REAL ({fecha}):
+
+ÍNDICES GLOBALES:
+- S&P 500:       {fmt('SP500')}
+- Nasdaq:        {fmt('NASDAQ')}
+- Dow Jones:     {fmt('DOW')}
+- VIX:           {fmt('VIX')}
+- Merval (ARS):  {fmt('MERVAL')}
+
+COMMODITIES:
+- Petróleo Brent:{fmt('BRENT')}
+- Petróleo WTI:  {fmt('WTI')}
+- Gas Natural:   {fmt('NATGAS')}
+- Oro:           {fmt('GOLD')}
+
+DIVISAS Y TASAS:
+- DXY (dólar):   {fmt('DXY')}
+- UST 2Y yield:  {fmt('UST2Y')}
+- UST 10Y yield: {fmt('UST10Y')}
+
+CRYPTO:
+- Bitcoin:       {fmt('BTC')}
+"""
+
         prompt = f"""Sos el analista financiero senior de LD Wealth Management.
 Generá el Parte Diario de mercados de hoy ({fecha}).
+
+Usá EXCLUSIVAMENTE los datos reales provistos abajo. No inventes cifras ni uses datos de memoria.
+Cuando menciones precios o variaciones, citá los números exactos del contexto.
+
+{market_context}
 
 Tu respuesta debe ser un objeto JSON válido con exactamente estas 12 claves:
 claves, senales, flash, panorama, fed, fiscal, comercio, geo, usa, latam, argentina, ldwm
 
-Cada clave debe contener un array de strings (entre 4 y 8 ítems por sección).
-Cada ítem es una oración informativa, directa y profesional, en español.
-
-Secciones:
-- claves: titulares más importantes del día en mercados globales
-- senales: variables y datos clave a seguir en las próximas 24-48h
-- flash: resumen de índices y activos (S&P, Nasdaq, Merval, petróleo, oro, dólar, bonos)
-- panorama: análisis macro global — acciones, bonos, commodities, divisas
-- fed: postura de la Fed y otros bancos centrales, expectativas de tasas
-- fiscal: política fiscal, déficit, gasto público en EE.UU. y mundo
-- comercio: comercio internacional, aranceles, cadenas de valor
-- geo: geopolítica relevante para mercados
-- usa: datos económicos de EE.UU. del día o semana
-- latam: Brasil, Chile, Colombia, México — contexto regional breve
-- argentina: economía, mercados, política y empresas locales
-- ldwm: régimen de riesgo actual, drivers del día, implicancia para posicionamiento y qué mirar las próximas 48h
+Cada clave contiene un array de 4 a 8 strings. Cada string es una oración informativa,
+directa y profesional en español. Usá los precios reales en flash y panorama.
+En ldwm: interpretá el régimen de riesgo actual basándote en los datos reales (VIX, variaciones).
 
 Respondé SOLO con el JSON, sin texto adicional, sin backticks, sin markdown."""
 
@@ -151,13 +221,11 @@ Respondé SOLO con el JSON, sin texto adicional, sin backticks, sin markdown."""
             messages=[{'role': 'user', 'content': prompt}]
         )
 
-        import json
         raw = message.content[0].text.strip()
-        # Limpiar posibles backticks
         raw = raw.replace('```json', '').replace('```', '').strip()
         parte = json.loads(raw)
 
-        return jsonify({'ok': True, 'data': parte})
+        return jsonify({'ok': True, 'data': parte, 'market_data': mkt})
 
     except Exception as e:
         return jsonify({'ok': False, 'msg': str(e)}), 500
