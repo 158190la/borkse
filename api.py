@@ -237,56 +237,61 @@ Respondé SOLO con el JSON, sin texto adicional, sin backticks, sin markdown."""
 def api_market():
     """
     Proxy de Yahoo Finance para evitar CORS en el browser.
-    Recibe ?tickers=AAPL,MSFT,... y devuelve precio + variación + closes del día.
+    Recibe ?tickers=^GSPC,BTC-USD y devuelve precio + variacion + closes.
     """
+    from urllib.parse import unquote
+
     tickers_param = request.args.get('tickers', '')
     if not tickers_param:
         return jsonify({'ok': False, 'msg': 'No tickers provided'}), 400
 
+    # Decodificar %5E -> ^ etc.
+    tickers_param = unquote(tickers_param)
     tickers = [t.strip() for t in tickers_param.split(',') if t.strip()]
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0',
+        'Accept': 'application/json',
+    }
     results = {}
 
     for ticker in tickers:
-        try:
-            url = f'https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=5m&range=1d'
-            r = requests.get(url, headers=headers, timeout=10)
-            d = r.json()
-            result = d.get('chart', {}).get('result', [None])[0]
-            if not result:
-                results[ticker] = None
+        data = None
+        urls = [
+            f'https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=5m&range=1d',
+            f'https://query2.finance.yahoo.com/v8/finance/chart/{ticker}?interval=5m&range=1d',
+            f'https://query1.finance.yahoo.com/v7/finance/quote?symbols={ticker}',
+        ]
+        for url in urls:
+            try:
+                r = requests.get(url, headers=headers, timeout=12)
+                if r.status_code != 200:
+                    continue
+                d = r.json()
+
+                if 'chart' in d:
+                    res = (d.get('chart') or {}).get('result') or []
+                    if res:
+                        meta   = res[0]['meta']
+                        price  = meta.get('regularMarketPrice') or meta.get('previousClose')
+                        prev   = meta.get('chartPreviousClose') or meta.get('previousClose') or price
+                        chg    = ((price - prev) / prev * 100) if (prev and price) else 0
+                        q0     = ((res[0].get('indicators') or {}).get('quote') or [{}])[0]
+                        closes = [v for v in (q0.get('close') or []) if v is not None]
+                        data = {'price': round(float(price), 6), 'chg': round(float(chg), 4), 'closes': closes[-50:]}
+                        break
+
+                elif 'quoteResponse' in d:
+                    qs = (d.get('quoteResponse') or {}).get('result') or []
+                    if qs:
+                        q = qs[0]
+                        price = q.get('regularMarketPrice')
+                        chg   = q.get('regularMarketChangePercent') or 0
+                        data  = {'price': round(float(price), 6) if price else None, 'chg': round(float(chg), 4), 'closes': []}
+                        break
+            except Exception:
                 continue
-            meta   = result['meta']
-            price  = meta.get('regularMarketPrice') or meta.get('previousClose')
-            prev   = meta.get('previousClose') or price
-            chg    = ((price - prev) / prev * 100) if prev else 0
-            closes = [v for v in (result.get('indicators', {}).get('quote', [{}])[0].get('close', [])) if v is not None]
-            results[ticker] = {
-                'price':  round(price, 6) if price else None,
-                'chg':    round(chg, 4),
-                'closes': closes[-50:]
-            }
-        except Exception:
-            results[ticker] = None
+
+        results[ticker] = data
 
     return jsonify({'ok': True, 'data': results})
-
-
-@app.route('/api/treasury', methods=['GET'])
-def api_treasury():
-    """
-    Devuelve los yields del Tesoro (interpolados desde FRED).
-    Útil si el frontend quiere actualizar la curva de forma independiente.
-    """
-    try:
-        from dashboard import fetch_treasury_yields
-        tsy = fetch_treasury_yields()
-        return jsonify(tsy)
-    except Exception as e:
-        return jsonify({'ok': False, 'msg': str(e)}), 500
-
-
-# ── main ──────────────────────────────────────────────────
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
