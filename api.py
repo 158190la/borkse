@@ -357,6 +357,54 @@ def api_fci_search():
         return jsonify({'ok': False, 'msg': str(e)}), 500
 
 
+_REND_CACHE = {}
+
+def _calc_rendimientos(fid, cid):
+    import time
+    from datetime import date, timedelta
+    key = f"{fid};{cid}"
+    now = time.time()
+    cached = _REND_CACHE.get(key)
+    if cached and now - cached['ts'] < 4 * 3600:
+        return cached['data']
+    empty = {'week': None, 'month': None, 'ytd': None, 'year': None}
+    today = date.today()
+    desde = today - timedelta(days=366)
+    def dfmt(d): return d.strftime('%d-%m-%Y')
+    try:
+        url = f'https://api.pub.cafci.org.ar/fondo/{fid}/clase/{cid}/rendimiento/{dfmt(desde)}/{dfmt(today)}'
+        r = req.get(url, timeout=20, headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.cafci.org.ar/'})
+        if r.status_code != 200: return empty
+        text = r.text.strip()
+        if not text or text[0] not in ('{', '['): return empty
+        items = r.json().get('data', [])
+        if not items: return empty
+        series = []
+        for it in items:
+            if not isinstance(it, dict) or not it.get('fecha') or it.get('vcp') is None: continue
+            try:
+                parts = str(it['fecha']).split('-')
+                fd = date(int(parts[0]), int(parts[1]), int(parts[2])) if len(parts[0])==4 else date(int(parts[2]), int(parts[1]), int(parts[0]))
+                series.append((fd, float(it['vcp'])))
+            except: continue
+        if not series: return empty
+        series.sort(key=lambda x: x[0])
+        last = series[-1][1]
+        def rend(target):
+            cands = [v for d,v in series if d <= target]
+            if not cands: cands = [v for d,v in series if d >= target][:1]
+            return round((last / cands[-1] - 1) * 100, 4) if cands and cands[-1] else None
+        result = {
+            'week':  rend(today - timedelta(days=7)),
+            'month': rend(today - timedelta(days=30)),
+            'ytd':   rend(date(today.year, 1, 1)),
+            'year':  rend(today - timedelta(days=365)),
+        }
+        _REND_CACHE[key] = {'data': result, 'ts': now}
+        return result
+    except: return empty
+
+
 @app.route('/api/fci/ficha', methods=['GET'])
 def api_fci_ficha():
     fid_s = request.args.get('fondo')
@@ -375,6 +423,9 @@ def api_fci_ficha():
                 f = matches[0]
         if not f:
             return jsonify({'ok': False, 'msg': f'Fondo {fid}/{cid} no encontrado'}), 404
+        f = dict(f)
+        hist = _calc_rendimientos(f['fondoId'], f['claseId'])
+        f['rendimientos'] = {**f['rendimientos'], **hist}
         return jsonify({'ok': True, 'data': f})
     except Exception as e:
         return jsonify({'ok': False, 'msg': str(e)}), 500
