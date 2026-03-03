@@ -191,6 +191,85 @@ Sin texto extra, sin backticks."""
     except Exception as e:
         return jsonify({'ok': False, 'msg': str(e)}), 500
 
+
+
+# ── /api/fci/* ────────────────────────────────────────────
+
+def _safe_float(v):
+    try: return round(float(v), 4) if v not in (None,'','N/A') else None
+    except: return None
+
+CAFCI_H = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    'Accept': 'application/json',
+    'Origin': 'https://www.cafci.org.ar',
+    'Referer': 'https://www.cafci.org.ar/',
+}
+
+@app.route('/api/fci/search', methods=['GET'])
+def api_fci_search():
+    q = request.args.get('q','').strip()
+    if not q: return jsonify({'ok':False,'msg':'q requerido'}), 400
+    try:
+        r = req.get(f'https://api.cafci.org.ar/fondo?nombre={q}&limit=40&estado=1', timeout=10, headers=CAFCI_H)
+        results = []
+        for f in r.json().get('data',[]):
+            gest = (f.get('gestora') or {})
+            tipo = (f.get('tipoFondo') or {})
+            for c in (f.get('clases') or []):
+                results.append({
+                    'fondoId': f.get('id'), 'claseId': c.get('id'),
+                    'nombre': f.get('nombre',''), 'clase': c.get('nombre',''),
+                    'gerente': gest.get('nombre','') if isinstance(gest,dict) else '',
+                    'tipo': tipo.get('nombre','') if isinstance(tipo,dict) else '',
+                    'moneda': c.get('moneda',''),
+                })
+        return jsonify({'ok':True,'data':results})
+    except Exception as e: return jsonify({'ok':False,'msg':str(e)}), 500
+
+@app.route('/api/fci/ficha', methods=['GET'])
+def api_fci_ficha():
+    fid, cid = request.args.get('fondo'), request.args.get('clase')
+    if not fid or not cid: return jsonify({'ok':False,'msg':'fondo y clase requeridos'}), 400
+    try:
+        d = req.get(f'https://api.cafci.org.ar/fondo/{fid}/clase/{cid}/ficha', timeout=10, headers=CAFCI_H).json().get('data',{})
+        diaria = (d.get('info') or {}).get('diaria',{})
+        rend   = diaria.get('rendimientos',{})
+        actual = diaria.get('actual',{})
+        fi     = d.get('fondo',{})
+        return jsonify({'ok':True,'data':{
+            'fondoId': int(fid), 'claseId': int(cid),
+            'nombre':  fi.get('nombre', d.get('nombre','')),
+            'gerente': (fi.get('gestora') or {}).get('nombre',''),
+            'tipo':    (fi.get('tipoFondo') or {}).get('nombre',''),
+            'moneda':  d.get('moneda',''),
+            'vcp':     actual.get('vcp') or diaria.get('vcp'),
+            'patrimonio': actual.get('patrimonio'),
+            'fecha':   diaria.get('referenceDay'),
+            'rendimientos': {
+                'day':   _safe_float((rend.get('day')   or {}).get('rendimiento')),
+                'week':  _safe_float((rend.get('week')  or {}).get('rendimiento')),
+                'month': _safe_float((rend.get('month') or {}).get('rendimiento')),
+                'ytd':   _safe_float((rend.get('ytd')   or {}).get('rendimiento')),
+                'year':  _safe_float((rend.get('year')  or {}).get('rendimiento')),
+            }
+        }})
+    except Exception as e: return jsonify({'ok':False,'msg':str(e)}), 500
+
+@app.route('/api/fci/historico', methods=['GET'])
+def api_fci_historico():
+    fid  = request.args.get('fondo')
+    cid  = request.args.get('clase')
+    from_d = request.args.get('desde')
+    to_d   = request.args.get('hasta')
+    if not all([fid,cid,from_d,to_d]): return jsonify({'ok':False,'msg':'fondo clase desde hasta requeridos'}), 400
+    try:
+        def fmt(d): y,m,day=d.split('-'); return f'{day}-{m}-{y}'
+        items = req.get(f'https://api.cafci.org.ar/fondo/{fid}/clase/{cid}/rendimiento/{fmt(from_d)}/{fmt(to_d)}', timeout=15, headers=CAFCI_H).json().get('data',[])
+        series = [{'fecha':it['fecha'],'vcp':float(it['vcp'])} for it in items if isinstance(it,dict) and it.get('fecha') and it.get('vcp') is not None]
+        return jsonify({'ok':True,'data':series})
+    except Exception as e: return jsonify({'ok':False,'msg':str(e)}), 500
+
 @app.route('/api/treasury', methods=['GET'])
 def api_treasury():
     try:
