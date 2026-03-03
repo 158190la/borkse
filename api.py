@@ -213,103 +213,50 @@ def _safe_float(v):
 _AD_CACHE     = {}   # fecha_str -> fondos_dict
 _AD_CACHE_TS  = {}   # fecha_str -> timestamp (solo para 'ultimo')
 
-def _load_fecha(fecha_str):
-    """
-    Descarga todos los tipos de FCI para una fecha dada.
-    fecha_str: 'ultimo' | 'YYYY/MM/DD'
-    Retorna dict: nombre_lower -> fondo_dict
-    """
-    import time
-    now = time.time()
-    # 'ultimo' se cachea 4h; fechas pasadas indefinidamente
-    if fecha_str in _AD_CACHE:
-        if fecha_str != 'ultimo' or now - _AD_CACHE_TS.get(fecha_str, 0) < 4 * 3600:
-            return _AD_CACHE[fecha_str]
-
-    fondos = {}
-    for tipo in _AD_TIPOS:
-        url = f'{_AD_BASE}/{tipo}/{fecha_str}'
-        try:
-            r = req.get(url, timeout=15, headers=_AD_H)
-            if r.status_code != 200:
-                continue
-            items = r.json()
-            if not isinstance(items, list):
-                continue
-            for it in items:
-                nombre = str(it.get('fondo') or '').strip()
-                if not nombre:
-                    continue
-                fondos[nombre.lower()] = {
-                    'nombre':     nombre,
-                    'tipo':       tipo,
-                    'fecha':      str(it.get('fecha') or ''),
-                    'vcp':        _safe_float(it.get('vcp')),
-                    'ccp':        _safe_float(it.get('ccp')),
-                    'patrimonio': _safe_float(it.get('patrimonio')),
-                    'horizonte':  str(it.get('horizonte') or ''),
-                }
-        except Exception:
-            continue
-
-    _AD_CACHE[fecha_str] = fondos
-    _AD_CACHE_TS[fecha_str] = now
-    return fondos
-
-
-def _find_fondo(fondos, query):
-    """Busca un fondo por nombre exacto (case-insensitive) o parcial."""
-    ql = query.strip().lower()
-    # Exact match
-    if ql in fondos:
-        return fondos[ql]
-    # Partial match - prefer startswith
-    starts = [f for k, f in fondos.items() if k.startswith(ql)]
-    if starts:
-        return starts[0]
-    contains = [f for k, f in fondos.items() if ql in k]
-    if contains:
-        return contains[0]
-    return None
-
-
 def _calc_rendimientos(nombre, vcp_hoy):
     """
-    Calcula rendimientos semanal/mensual/YTD/anual comparando VCPs de
-    distintas fechas usando la API de ArgentinaDatos.
+    Rendimiento diario: /ultimo vs /penultimo.
+    Rendimientos semana/mes/YTD/año: desde Google Sheets (acumulado con /tick).
     """
-    import time
     from datetime import date, timedelta
 
     if not vcp_hoy:
-        return {'week': None, 'month': None, 'ytd': None, 'year': None}
+        return {'day': None, 'week': None, 'month': None, 'ytd': None, 'year': None}
 
-    today = date.today()
-    targets = {
-        'week':  today - timedelta(days=7),
-        'month': today - timedelta(days=30),
-        'ytd':   date(today.year, 1, 1),
-        'year':  today - timedelta(days=365),
+    # Diario desde penultimo
+    rend_day = None
+    try:
+        penult = _load_ad('penultimo')
+        fp = _find(penult, nombre)
+        if fp and fp.get('vcp'):
+            rend_day = round((vcp_hoy / fp['vcp'] - 1) * 100, 4)
+    except Exception:
+        pass
+
+    # Históricos desde Google Sheets
+    today_s = date.today().strftime('%Y-%m-%d')
+    today_d = date.today()
+
+    def rend_desde(target_str):
+        try:
+            series = _gs_read_series(nombre, target_str, today_s)
+            if not series:
+                return None
+            base_vcp = series[0]['vcp']
+            return round((vcp_hoy / base_vcp - 1) * 100, 4) if base_vcp else None
+        except Exception:
+            return None
+
+    return {
+        'day':   rend_day,
+        'week':  rend_desde((today_d - timedelta(days=7)).strftime('%Y-%m-%d')),
+        'month': rend_desde((today_d - timedelta(days=30)).strftime('%Y-%m-%d')),
+        'ytd':   rend_desde(f'{today_d.year}-01-01'),
+        'year':  rend_desde((today_d - timedelta(days=365)).strftime('%Y-%m-%d')),
     }
 
-    result = {}
-    for period, target_date in targets.items():
-        base_vcp = None
-        # Buscar hasta 5 dias anteriores (feriados/findes)
-        for delta in range(0, 6):
-            d = target_date - timedelta(days=delta)
-            fecha_str = d.strftime('%Y/%m/%d')
-            fondos = _load_fecha(fecha_str)
-            f = _find_fondo(fondos, nombre)
-            if f and f.get('vcp'):
-                base_vcp = f['vcp']
-                break
-        result[period] = round((vcp_hoy / base_vcp - 1) * 100, 4) if base_vcp else None
 
-    return result
-
-
-_REND_CACHE = {}   # nombre_lower -> {'data': {...}, 'ts': float}
+_REND_CACHE = {}
 
 def _calc_rendimientos_cached(nombre, vcp_hoy):
     import time
@@ -323,64 +270,153 @@ def _calc_rendimientos_cached(nombre, vcp_hoy):
     return data
 
 
+
+# ── Google Sheets histórico de VCPs ───────────────────────────────────────────
+# Sheet: "FCI Historico" con columnas A=fecha, B=nombre, C=vcp
+# Se crea automáticamente si no existe.
+
+_GS_SHEET_NAME = 'FCI Historico'
+_GS_WS_NAME    = 'vcps'
+_GS_CACHE      = {}   # {'rows': [...], 'ts': float}
+
+def _gs_get_ws():
+    """Abre o crea el worksheet de VCPs en el Google Sheet principal."""
+    ensure_credentials()
+    import gspread
+    from oauth2client.service_account import ServiceAccountCredentials
+    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+    creds = ServiceAccountCredentials.from_json_keyfile_name('credentials.json', scope)
+    client = gspread.authorize(creds)
+    # Abrir spreadsheet existente (el mismo que usa dashboard.py)
+    import json
+    creds_data = json.loads(open('credentials.json').read())
+    # Buscar spreadsheet por nombre
+    try:
+        sh = client.open(_GS_SHEET_NAME)
+    except Exception:
+        sh = client.create(_GS_SHEET_NAME)
+        sh.share('', perm_type='anyone', role='reader')
+    # Abrir o crear worksheet
+    try:
+        ws = sh.worksheet(_GS_WS_NAME)
+    except Exception:
+        ws = sh.add_worksheet(_GS_WS_NAME, rows=50000, cols=3)
+        ws.append_row(['fecha', 'nombre', 'vcp'])
+    return ws
+
+def _gs_write_snapshot():
+    """
+    Escribe el VCP de hoy para todos los fondos en Google Sheets.
+    Solo escribe fechas nuevas (no duplica).
+    """
+    from datetime import date
+    today = date.today().strftime('%Y-%m-%d')
+    fondos = _load_ad('ultimo')
+    if not fondos:
+        return 0, 'No se pudo cargar fondos'
+    try:
+        ws = _gs_get_ws()
+        # Verificar si ya existe hoy
+        all_vals = ws.col_values(1)  # columna fecha
+        if today in all_vals:
+            return 0, f'Ya existe snapshot para {today}'
+        # Preparar batch de filas
+        rows = [[today, f['nombre'], f['vcp']] for f in fondos.values() if f.get('vcp')]
+        # Escribir en batches de 500
+        for i in range(0, len(rows), 500):
+            ws.append_rows(rows[i:i+500], value_input_option='RAW')
+        return len(rows), 'ok'
+    except Exception as e:
+        return 0, str(e)
+
+def _gs_read_series(nombre, desde, hasta):
+    """
+    Lee la serie histórica de VCP para un fondo desde Google Sheets.
+    Cachea 1h.
+    """
+    import time
+    now = time.time()
+    cache_key = nombre.lower()
+    cached = _GS_CACHE.get(cache_key)
+    if cached and now - cached['ts'] < 3600:
+        return cached['rows']
+    try:
+        ws = _gs_get_ws()
+        # Leer todas las filas de este fondo en el rango de fechas
+        # Para eficiencia: leer todo y filtrar en Python
+        all_rows = ws.get_all_values()
+        nl = nombre.lower()
+        series = [
+            {'fecha': r[0], 'vcp': float(r[2])}
+            for r in all_rows[1:]  # skip header
+            if len(r) >= 3 and r[1].lower() == nl and desde <= r[0] <= hasta
+        ]
+        series.sort(key=lambda x: x['fecha'])
+        _GS_CACHE[cache_key] = {'rows': series, 'ts': now}
+        return series
+    except Exception as e:
+        return []
+
+
+
+@app.route('/api/fci/tick', methods=['GET', 'POST'])
+def api_fci_tick():
+    """Guarda snapshot diario de VCPs en Google Sheets. Llamar 1 vez por dia."""
+    try:
+        count, msg = _gs_write_snapshot()
+        return jsonify({'ok': True, 'fondos_guardados': count, 'msg': msg})
+    except Exception as e:
+        return jsonify({'ok': False, 'msg': str(e)}), 500
+
+
 @app.route('/api/fci/search', methods=['GET'])
 def api_fci_search():
     q = request.args.get('q', '').strip().lower()
     if not q or len(q) < 2:
         return jsonify({'ok': False, 'msg': 'q requerido (min 2 chars)'}), 400
     try:
-        fondos = _load_fecha('ultimo')
+        fondos = _load_ad('ultimo')
         results = []
         for k, f in fondos.items():
             if q in k:
                 results.append({
-                    'fondoId':    abs(hash(f['nombre'])) % 1000000,
-                    'claseId':    abs(hash(f['nombre'])) % 1000000,
+                    'fondoId':    abs(hash(f['nombre'])) % 10000000,
+                    'claseId':    abs(hash(f['nombre'])) % 10000000,
                     'nombre':     f['nombre'],
                     'gerente':    '',
-                    'tipo':       f['tipo'],
+                    'tipo':       f['horizonte'] or f['tipo'],
                     'moneda':     'ARS',
                     'vcp':        f['vcp'],
                     'patrimonio': f['patrimonio'],
-                    'rendimientos': {
-                        'day': None, 'week': None, 'month': None, 'ytd': None, 'year': None
-                    },
+                    'rendimientos': {'day': None, 'week': None, 'month': None, 'ytd': None, 'year': None},
                 })
         results.sort(key=lambda x: (0 if x['nombre'].lower().startswith(q) else 1, x['nombre']))
-        results = results[:40]
-        return jsonify({'ok': True, 'data': results, 'total': len(fondos)})
+        return jsonify({'ok': True, 'data': results[:40], 'total': len(fondos)})
     except Exception as e:
         return jsonify({'ok': False, 'msg': str(e)}), 500
 
 
 @app.route('/api/fci/ficha', methods=['GET'])
 def api_fci_ficha():
-    """
-    Acepta: ?nombre=<nombre> o ?fondo=<id>&clase=<id> (id = hash del nombre, ignorado)
-    Busca en ArgentinaDatos y calcula rendimientos históricos.
-    """
     nombre_q = request.args.get('nombre', '').strip()
-    # Si viene el nombre serializado en el fondo (desde search), úsalo directo
-    # Si no, no podemos resolver por ID (el hash no es reversible) → error descriptivo
     if not nombre_q:
-        return jsonify({'ok': False, 'msg': 'Usar ?nombre=<nombre del fondo>'}), 400
+        return jsonify({'ok': False, 'msg': 'Pasar ?nombre=<nombre del fondo>'}), 400
     try:
-        fondos = _load_fecha('ultimo')
-        f = _find_fondo(fondos, nombre_q)
+        fondos = _load_ad('ultimo')
+        f = _find(fondos, nombre_q)
         if not f:
-            return jsonify({'ok': False, 'msg': f'Fondo "{nombre_q}" no encontrado'}), 404
-
-        hist = _calc_rendimientos_cached(f['nombre'], f['vcp'])
+            return jsonify({'ok': False, 'msg': f'Fondo no encontrado'}), 404
+        hist = _calc_rendimientos(f['nombre'], f['vcp'])
         return jsonify({'ok': True, 'data': {
-            'fondoId':    abs(hash(f['nombre'])) % 1000000,
-            'claseId':    abs(hash(f['nombre'])) % 1000000,
+            'fondoId':    abs(hash(f['nombre'])) % 10000000,
+            'claseId':    abs(hash(f['nombre'])) % 10000000,
             'nombre':     f['nombre'],
             'gerente':    '',
-            'tipo':       f['tipo'],
+            'tipo':       f['horizonte'] or f['tipo'],
             'moneda':     'ARS',
             'vcp':        f['vcp'],
             'patrimonio': f['patrimonio'],
-            'rendimientos': {'day': None, **hist},
+            'rendimientos': hist,
         }})
     except Exception as e:
         return jsonify({'ok': False, 'msg': str(e)}), 500
@@ -388,33 +424,16 @@ def api_fci_ficha():
 
 @app.route('/api/fci/historico', methods=['GET'])
 def api_fci_historico():
-    """
-    Serie histórica de VCP entre dos fechas.
-    Acepta: ?nombre=<nombre>&desde=YYYY-MM-DD&hasta=YYYY-MM-DD
-    """
     nombre_q = request.args.get('nombre', '').strip()
     from_d   = request.args.get('desde', '').strip()
     to_d     = request.args.get('hasta', '').strip()
     if not nombre_q or not from_d or not to_d:
         return jsonify({'ok': False, 'msg': 'nombre, desde y hasta requeridos'}), 400
     try:
-        from datetime import date, timedelta
-        y0,m0,d0 = from_d.split('-'); y1,m1,d1 = to_d.split('-')
-        start = date(int(y0), int(m0), int(d0))
-        end   = date(int(y1), int(m1), int(d1))
-        delta = (end - start).days
-        step  = max(1, delta // 30)  # max ~30 puntos
-
-        series = []
-        d = start
-        while d <= end:
-            fecha_str = d.strftime('%Y/%m/%d')
-            fondos = _load_fecha(fecha_str)
-            f = _find_fondo(fondos, nombre_q)
-            if f and f.get('vcp'):
-                series.append({'fecha': d.strftime('%Y-%m-%d'), 'vcp': f['vcp']})
-            d += timedelta(days=step)
-
+        fondos = _load_ad('ultimo')
+        f = _find(fondos, nombre_q)
+        nombre_real = f['nombre'] if f else nombre_q
+        series = _gs_read_series(nombre_real, from_d, to_d)
         return jsonify({'ok': True, 'data': series})
     except Exception as e:
         return jsonify({'ok': False, 'msg': str(e)}), 500
@@ -422,24 +441,34 @@ def api_fci_historico():
 
 @app.route('/api/fci/debug', methods=['GET'])
 def api_fci_debug():
-    h = {'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json'}
-    h2 = {**h, 'Origin': 'https://www.cafci.org.ar', 'Referer': 'https://www.cafci.org.ar/'}
-    results = {}
-    tests = {
-        'cafci_rend':      'https://api.cafci.org.ar/fondo/847/clase/2409/rendimiento/2025-01-01/2025-02-01',
-        'cafci_rend_orig': 'https://api.cafci.org.ar/fondo/847/clase/2409/rendimiento/2025-01-01/2025-02-01',
-        'pub_rend':        'https://api.pub.cafci.org.ar/fondo/847/clase/2409/rendimiento/2025-01-01/2025-02-01',
-        'pub_clase':       'https://api.pub.cafci.org.ar/fondo/847/clase/2409',
-        'pub_cuotaparte':  'https://api.pub.cafci.org.ar/fondo/847/clase/2409/cuotaparte',
-    }
-    for label, url in tests.items():
-        hdrs = h2 if 'orig' in label else h
+    try:
+        fondos_u = _load_ad('ultimo')
+        fondos_p = _load_ad('penultimo')
+        sample   = list(fondos_u.values())[:3]
+        rend_test = None
+        if sample:
+            fp = _find(fondos_p, sample[0]['nombre'])
+            if fp and fp.get('vcp') and sample[0].get('vcp'):
+                rend_test = round((sample[0]['vcp'] / fp['vcp'] - 1) * 100, 4)
+        # Test sheets connection
+        gs_status = 'not tested'
         try:
-            r = req.get(url, timeout=8, headers=hdrs)
-            results[label] = {'status': r.status_code, 'preview': r.text[:400]}
+            ws = _gs_get_ws()
+            n_rows = len(ws.col_values(1))
+            gs_status = f'ok - {n_rows} filas en sheet'
         except Exception as e:
-            results[label] = {'error': str(e)}
-    return jsonify({'ok': True, 'results': results})
+            gs_status = f'error: {e}'
+        return jsonify({
+            'ok': True,
+            'fondos_ultimo':    len(fondos_u),
+            'fondos_penultimo': len(fondos_p),
+            'rend_diario_test': rend_test,
+            'google_sheets':    gs_status,
+            'sample': [{'nombre': f['nombre'], 'vcp': f['vcp'], 'fecha': f['fecha']} for f in sample],
+            'tip': 'Llamar POST /api/fci/tick una vez por dia para acumular historico en Google Sheets',
+        })
+    except Exception as e:
+        return jsonify({'ok': False, 'msg': str(e)}), 500
 
 
 @app.route('/api/treasury', methods=['GET'])
