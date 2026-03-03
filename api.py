@@ -449,37 +449,32 @@ def api_fci_historico():
 
 @app.route('/api/fci/debug', methods=['GET'])
 def api_fci_debug():
-    """Diagnostico: prueba si el endpoint acepta parametro ?fecha=."""
-    try:
-        from datetime import date, timedelta
-        results = {}
-        test_dates = [
-            ('sin_fecha',    'https://api.pub.cafci.org.ar/pb_get'),
-            ('fecha_semana', f'https://api.pub.cafci.org.ar/pb_get?fecha={(date.today()-timedelta(days=7)).strftime("%d-%m-%Y")}'),
-            ('fecha_mes',    f'https://api.pub.cafci.org.ar/pb_get?fecha={(date.today()-timedelta(days=30)).strftime("%d-%m-%Y")}'),
-        ]
-        for label, url in test_dates:
-            r = req.get(url, timeout=15, headers=_PUB_H)
-            info = {
+    """Testa el endpoint de rendimiento historico de api.pub.cafci.org.ar"""
+    from datetime import date, timedelta
+    today = date.today()
+    desde = today - timedelta(days=30)
+    def dfmt(d): return d.strftime('%d-%m-%Y')
+    results = {}
+    # Probar con distintos fondos conocidos
+    test_cases = [
+        ('fondo_193',        f'https://api.pub.cafci.org.ar/fondo/193/clase/193/rendimiento/{dfmt(desde)}/{dfmt(today)}'),
+        ('fondo_193_cls_0',  f'https://api.pub.cafci.org.ar/fondo/193/clase/0/rendimiento/{dfmt(desde)}/{dfmt(today)}'),
+        ('fondo_5272_pub',   f'https://api.pub.cafci.org.ar/fondo/5272/clase/5272/rendimiento/{dfmt(desde)}/{dfmt(today)}'),
+        ('fondo_847_priv',   f'https://api.cafci.org.ar/fondo/847/clase/2409/rendimiento/{dfmt(desde)}/{dfmt(today)}'),
+    ]
+    for label, url in test_cases:
+        try:
+            r = req.get(url, timeout=10, headers=_PUB_H)
+            t = r.text.strip()
+            results[label] = {
+                'url': url,
                 'status': r.status_code,
-                'content_type': r.headers.get('content-type', ''),
-                'size_kb': round(len(r.content) / 1024, 1),
+                'content_type': r.headers.get('content-type',''),
+                'preview': t[:300],
             }
-            if r.status_code == 200 and len(r.content) > 5000 and 'html' not in r.headers.get('content-type',''):
-                try:
-                    fondos = _parse_xls(r.content)
-                    info['fondos_count'] = len(fondos)
-                    sample = list(fondos.items())[:2]
-                    info['sample'] = {n: f['vcp'] for n, f in sample}
-                except Exception as e:
-                    info['parse_error'] = str(e)
-            else:
-                info['response_preview'] = r.text[:200]
-            results[label] = info
-        return jsonify({'ok': True, 'results': results})
-    except Exception as e:
-        return jsonify({'ok': False, 'msg': str(e)}), 500
-
+        except Exception as e:
+            results[label] = {'url': url, 'error': str(e)}
+    return jsonify({'ok': True, 'results': results})
 
 @app.route('/api/treasury', methods=['GET'])
 def api_treasury():
