@@ -193,9 +193,26 @@ Sin texto extra, sin backticks."""
 
 
 # ── /api/fci/* ─────────────────────────────────────────────────────────────────
-# Fuente: https://api.pub.cafci.org.ar/pb_get
-# Planilla Excel publica diaria, sin autenticacion.
-# La API privada (api.cafci.org.ar) requiere auth (401 Unauthorized).
+# Fuente: https://api.pub.cafci.org.ar/pb_get  (Excel publico, sin auth)
+#
+# Estructura real del Excel (confirmada via /api/fci/debug):
+#   Fila 1: titulo "Camara Argentina de Fondos Comunes de Inversion"
+#   Fila 2: direccion
+#   Fila 3: descripcion "Reporte: Planilla Diaria"
+#   Fila 4: HEADERS REALES (columna 0 = "Fondo", _col1 = "Clasificacion", etc.)
+#   Fila 5+: datos
+#
+# Columnas relevantes (por posicion, 0-indexed):
+#   0  = Fondo (nombre fondo - clase, ej: "FIMA Premium - Clase A")
+#   1  = Clasificacion (tipo horizonte)
+#   4  = Fecha
+#   5  = Valor (mil cuotapartes) = VCP x 1000
+#   9  = Variacion cuotaparte %  = rendimiento diario
+#   14 = Patrimonio
+#   20 = Codigo CAFCI            = "fondoId;claseId"
+#   23 = Sociedad Gerente
+#   25 = Codigo de Moneda
+#   36 = Moneda Fondo (nombre)
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _safe_float(v):
@@ -204,15 +221,34 @@ def _safe_float(v):
     except Exception:
         return None
 
-_CAFCI_XLS_CACHE = {'rows': None, 'header': None, 'ts': 0}
+_CAFCI_XLS_CACHE = {'fondos': None, 'ts': 0}
 
-def _cafci_load_xls():
-    """Descarga y parsea la planilla diaria publica de CAFCI. Cachea 4 horas."""
+# Mapeo de posicion de columna (0-indexed) a nombre semantico
+# Basado en la fila de headers real (fila 4 del Excel)
+_COL_IDX = {
+    'nombre':      0,   # "Fondo" -> "FIMA Premium - Clase A"
+    'tipo':        1,   # "Clasificacion"
+    'fecha':       4,   # "Fecha"
+    'vcp':         5,   # "Valor (mil cuotapartes)"
+    'rend_dia':    9,   # "Variacion cuotaparte %"
+    'patrimonio':  14,  # "Patrimonio"
+    'cafci_code':  20,  # "Codigo CAFCI" -> "fondoId;claseId"
+    'gerente':     23,  # "Sociedad Gerente"
+    'cod_moneda':  25,  # "Codigo de Moneda"
+    'moneda':      36,  # "Moneda Fondo"
+}
+
+def _cafci_load_fondos():
+    """
+    Descarga el Excel publico de CAFCI, salta las 3 filas de encabezado,
+    usa la fila 4 como header y parsea los datos desde la fila 5.
+    Cachea 4 horas.
+    """
     import time, io
     import openpyxl
     now = time.time()
-    if _CAFCI_XLS_CACHE['rows'] and now - _CAFCI_XLS_CACHE['ts'] < 4 * 3600:
-        return _CAFCI_XLS_CACHE['rows'], _CAFCI_XLS_CACHE['header']
+    if _CAFCI_XLS_CACHE['fondos'] and now - _CAFCI_XLS_CACHE['ts'] < 4 * 3600:
+        return _CAFCI_XLS_CACHE['fondos']
 
     r = req.get(
         'https://api.pub.cafci.org.ar/pb_get', timeout=25,
@@ -224,66 +260,86 @@ def _cafci_load_xls():
     wb = openpyxl.load_workbook(io.BytesIO(r.content), read_only=True, data_only=True)
     ws = wb.active
 
-    header = None
-    rows = []
-    for row in ws.iter_rows(values_only=True):
-        if all(c is None for c in row):
-            continue
-        if header is None:
-            header = [str(c).strip().lower() if c is not None else f'_col{i}'
-                      for i, c in enumerate(row)]
-            continue
-        rows.append(dict(zip(header, row)))
-    wb.close()
-
-    _CAFCI_XLS_CACHE['rows'] = rows
-    _CAFCI_XLS_CACHE['header'] = header
-    _CAFCI_XLS_CACHE['ts'] = now
-    return rows, header
-
-
-def _col(row, *candidates):
-    """Busca el primer candidato en el dict row por substring match."""
-    for c in candidates:
-        cl = c.lower()
-        if cl in row and row[cl] is not None:
-            return row[cl]
-        for k, v in row.items():
-            if cl in k and v is not None:
-                return v
-    return None
-
-
-def _rows_to_fondos(rows):
     fondos = {}
-    for row in rows:
-        fid    = _col(row, 'idfondo', 'id fondo', 'id_fondo', 'fondo_id')
-        cid    = _col(row, 'idclase', 'id clase', 'id_clase', 'clase_id')
-        nombre = _col(row, 'denominacion', 'nombre fondo', 'nombre_fondo', 'fondo')
-        if not fid or not cid or not nombre:
+    header_row_found = False
+    skip_count = 0
+
+    for row in ws.iter_rows(values_only=True):
+        # Las primeras filas no-vacias son: titulo, direccion, descripcion, headers
+        # Detectamos la fila de headers buscando la celda que diga "Fondo" en col 0
+        # y "Clasificacion" o similar en col 1
+        if not header_row_found:
+            if row[0] is not None and str(row[0]).strip().lower() == 'fondo':
+                header_row_found = True
+            # tambien saltamos si es la fila con el titulo real (col1 = Clasificacion)
+            elif row[1] is not None and 'clasificaci' in str(row[1]).lower():
+                header_row_found = True
+            continue  # salta hasta encontrar el header
+
+        # A partir de aca son filas de datos
+        cols = list(row)
+        nombre_raw = cols[_COL_IDX['nombre']] if len(cols) > _COL_IDX['nombre'] else None
+        cafci_code = cols[_COL_IDX['cafci_code']] if len(cols) > _COL_IDX['cafci_code'] else None
+
+        if not nombre_raw or not cafci_code:
             continue
-        try:
-            fid, cid = int(float(str(fid))), int(float(str(cid)))
-        except Exception:
+
+        # Codigo CAFCI: puede ser "847;2409" o numero entero/float
+        fid, cid = None, None
+        code_str = str(cafci_code).strip()
+        if ';' in code_str:
+            parts = code_str.split(';')
+            if len(parts) >= 2:
+                try:
+                    fid = int(float(parts[0]))
+                    cid = int(float(parts[1]))
+                except Exception:
+                    pass
+        else:
+            # Algunos archivos tienen solo el ID del fondo (sin clase separada)
+            # En ese caso usamos el codigo como fondoId y 0 como claseId placeholder
+            try:
+                fid = int(float(code_str))
+                cid = 0
+            except Exception:
+                pass
+
+        if fid is None:
             continue
+
         key = f'{fid};{cid}'
+        vcp_raw = cols[_COL_IDX['vcp']] if len(cols) > _COL_IDX['vcp'] else None
+        rend_raw = cols[_COL_IDX['rend_dia']] if len(cols) > _COL_IDX['rend_dia'] else None
+        pat_raw  = cols[_COL_IDX['patrimonio']] if len(cols) > _COL_IDX['patrimonio'] else None
+        ger_raw  = cols[_COL_IDX['gerente']] if len(cols) > _COL_IDX['gerente'] else None
+        tipo_raw = cols[_COL_IDX['tipo']] if len(cols) > _COL_IDX['tipo'] else None
+        mon_raw  = cols[_COL_IDX['moneda']] if len(cols) > _COL_IDX['moneda'] else None
+
         fondos[key] = {
             'fondoId':    fid,
             'claseId':    cid,
-            'nombre':     str(nombre).strip(),
-            'gerente':    str(_col(row, 'gerente', 'sociedad gerente', 'soc. gerente') or '').strip(),
-            'tipo':       str(_col(row, 'tipo fondo', 'tipo_fondo', 'tipo', 'horizonte') or '').strip(),
-            'moneda':     str(_col(row, 'moneda', 'currency') or 'ARS').strip(),
-            'vcp':        _safe_float(_col(row, 'vcp', 'valor cuotaparte', 'vcpunitario')),
-            'patrimonio': _safe_float(_col(row, 'patrimonio', 'patrimonio neto', 'patrim')),
+            'nombre':     str(nombre_raw).strip(),
+            'gerente':    str(ger_raw).strip() if ger_raw else '',
+            'tipo':       str(tipo_raw).strip() if tipo_raw else '',
+            'moneda':     str(mon_raw).strip() if mon_raw else 'ARS',
+            'vcp':        _safe_float(vcp_raw),
+            'patrimonio': _safe_float(pat_raw),
             'rendimientos': {
-                'day':   _safe_float(_col(row, 'rend. dia', 'rend dia', 'rendimiento dia', 'diario')),
-                'week':  _safe_float(_col(row, 'rend. semana', 'semanal', 'semana')),
-                'month': _safe_float(_col(row, 'rend. mes', 'mensual', 'mes')),
-                'ytd':   _safe_float(_col(row, 'ytd', 'año corriente', 'rend. año', 'anual ytd')),
-                'year':  _safe_float(_col(row, '12 meses', '12m', 'ultimos 12', 'ultimo año', '1 año')),
+                'day':   _safe_float(rend_raw),
+                'week':  None,
+                'month': None,
+                'ytd':   None,
+                'year':  None,
             },
         }
+
+    wb.close()
+
+    if not fondos:
+        raise Exception('No se parseo ningun fondo del Excel CAFCI')
+
+    _CAFCI_XLS_CACHE['fondos'] = fondos
+    _CAFCI_XLS_CACHE['ts'] = now
     return fondos
 
 
@@ -293,8 +349,7 @@ def api_fci_search():
     if not q or len(q) < 2:
         return jsonify({'ok': False, 'msg': 'q requerido (min 2 chars)'}), 400
     try:
-        rows, _ = _cafci_load_xls()
-        fondos = _rows_to_fondos(rows)
+        fondos = _cafci_load_fondos()
         results = [f for f in fondos.values() if q in f['nombre'].lower()][:40]
         results.sort(key=lambda f: (0 if f['nombre'].lower().startswith(q) else 1, f['nombre']))
         return jsonify({'ok': True, 'data': results, 'total': len(fondos)})
@@ -310,12 +365,16 @@ def api_fci_ficha():
         return jsonify({'ok': False, 'msg': 'fondo y clase requeridos'}), 400
     try:
         fid, cid = int(fid_s), int(cid_s)
-        rows, _ = _cafci_load_xls()
-        fondos = _rows_to_fondos(rows)
+        fondos = _cafci_load_fondos()
         key = f'{fid};{cid}'
         f = fondos.get(key)
         if not f:
-            return jsonify({'ok': False, 'msg': f'Fondo {fid}/{cid} no encontrado en planilla'}), 404
+            # Buscar solo por fondoId si claseId no matchea
+            matches = [v for k, v in fondos.items() if v['fondoId'] == fid]
+            if matches:
+                f = matches[0]
+        if not f:
+            return jsonify({'ok': False, 'msg': f'Fondo {fid}/{cid} no encontrado'}), 404
         return jsonify({'ok': True, 'data': f})
     except Exception as e:
         return jsonify({'ok': False, 'msg': str(e)}), 500
@@ -323,9 +382,8 @@ def api_fci_ficha():
 
 @app.route('/api/fci/historico', methods=['GET'])
 def api_fci_historico():
-    """Serie historica de VCP via api.pub.cafci.org.ar."""
-    fid  = request.args.get('fondo')
-    cid  = request.args.get('clase')
+    fid   = request.args.get('fondo')
+    cid   = request.args.get('clase')
     from_d = request.args.get('desde')
     to_d   = request.args.get('hasta')
     if not all([fid, cid, from_d, to_d]):
@@ -338,6 +396,9 @@ def api_fci_historico():
         r = req.get(url, timeout=20,
                     headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.cafci.org.ar/'})
         if r.status_code != 200:
+            return jsonify({'ok': True, 'data': []})
+        text = r.text.strip()
+        if not text or text[0] not in ('{', '['):
             return jsonify({'ok': True, 'data': []})
         items = r.json().get('data', [])
         series = [
@@ -352,14 +413,27 @@ def api_fci_historico():
 
 @app.route('/api/fci/debug', methods=['GET'])
 def api_fci_debug():
-    """Muestra columnas y primeras 3 filas del Excel para diagnosticar."""
+    """Muestra la estructura real del Excel y los primeros 3 fondos parseados."""
+    import io
+    import openpyxl
     try:
-        rows, header = _cafci_load_xls()
+        r = req.get('https://api.pub.cafci.org.ar/pb_get', timeout=25,
+                    headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.cafci.org.ar/'})
+        wb = openpyxl.load_workbook(io.BytesIO(r.content), read_only=True, data_only=True)
+        ws = wb.active
+        raw_rows = []
+        for i, row in enumerate(ws.iter_rows(values_only=True)):
+            raw_rows.append([str(c) if c is not None else None for c in row])
+            if i >= 5:
+                break
+        wb.close()
+        fondos = _cafci_load_fondos()
+        sample = list(fondos.values())[:5]
         return jsonify({
             'ok': True,
-            'total_rows': len(rows),
-            'columns': header,
-            'sample': rows[:3]
+            'total_fondos': len(fondos),
+            'first_6_raw_rows': raw_rows,
+            'sample_fondos': sample
         })
     except Exception as e:
         return jsonify({'ok': False, 'msg': str(e)}), 500
