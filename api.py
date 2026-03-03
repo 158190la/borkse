@@ -3,7 +3,7 @@ API endpoint para Railway
 Expone el scraper de Deutsche Börse como servicio web
 """
 
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 import asyncio
 import threading
@@ -230,6 +230,46 @@ Respondé SOLO con el JSON, sin texto adicional, sin backticks, sin markdown."""
     except Exception as e:
         return jsonify({'ok': False, 'msg': str(e)}), 500
 
+
+
+# ── /api/market ───────────────────────────────────────────
+@app.route('/api/market', methods=['GET'])
+def api_market():
+    """
+    Proxy de Yahoo Finance para evitar CORS en el browser.
+    Recibe ?tickers=AAPL,MSFT,... y devuelve precio + variación + closes del día.
+    """
+    tickers_param = request.args.get('tickers', '')
+    if not tickers_param:
+        return jsonify({'ok': False, 'msg': 'No tickers provided'}), 400
+
+    tickers = [t.strip() for t in tickers_param.split(',') if t.strip()]
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    results = {}
+
+    for ticker in tickers:
+        try:
+            url = f'https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=5m&range=1d'
+            r = requests.get(url, headers=headers, timeout=10)
+            d = r.json()
+            result = d.get('chart', {}).get('result', [None])[0]
+            if not result:
+                results[ticker] = None
+                continue
+            meta   = result['meta']
+            price  = meta.get('regularMarketPrice') or meta.get('previousClose')
+            prev   = meta.get('previousClose') or price
+            chg    = ((price - prev) / prev * 100) if prev else 0
+            closes = [v for v in (result.get('indicators', {}).get('quote', [{}])[0].get('close', [])) if v is not None]
+            results[ticker] = {
+                'price':  round(price, 6) if price else None,
+                'chg':    round(chg, 4),
+                'closes': closes[-50:]
+            }
+        except Exception:
+            results[ticker] = None
+
+    return jsonify({'ok': True, 'data': results})
 
 
 @app.route('/api/treasury', methods=['GET'])
