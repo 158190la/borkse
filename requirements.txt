@@ -6,3 +6,4 @@ google-auth
 requests
 anthropic
 openpyxl
+oauth2client
