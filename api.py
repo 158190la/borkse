@@ -104,7 +104,66 @@ def api_bonds():
         return jsonify({'ok': False, 'msg': str(e)}), 500
 
 
-# ── /api/treasury ─────────────────────────────────────────
+
+# ── /api/parte ────────────────────────────────────────────
+@app.route('/api/parte', methods=['GET', 'POST'])
+def api_parte():
+    """
+    Llama a la API de Anthropic desde el servidor (evita CORS)
+    y devuelve el parte diario en JSON.
+    """
+    try:
+        import anthropic
+        from datetime import datetime
+
+        fecha = datetime.now().strftime('%A %d de %B de %Y')
+
+        prompt = f"""Sos el analista financiero senior de LD Wealth Management.
+Generá el Parte Diario de mercados de hoy ({fecha}).
+
+Tu respuesta debe ser un objeto JSON válido con exactamente estas 12 claves:
+claves, senales, flash, panorama, fed, fiscal, comercio, geo, usa, latam, argentina, ldwm
+
+Cada clave debe contener un array de strings (entre 4 y 8 ítems por sección).
+Cada ítem es una oración informativa, directa y profesional, en español.
+
+Secciones:
+- claves: titulares más importantes del día en mercados globales
+- senales: variables y datos clave a seguir en las próximas 24-48h
+- flash: resumen de índices y activos (S&P, Nasdaq, Merval, petróleo, oro, dólar, bonos)
+- panorama: análisis macro global — acciones, bonos, commodities, divisas
+- fed: postura de la Fed y otros bancos centrales, expectativas de tasas
+- fiscal: política fiscal, déficit, gasto público en EE.UU. y mundo
+- comercio: comercio internacional, aranceles, cadenas de valor
+- geo: geopolítica relevante para mercados
+- usa: datos económicos de EE.UU. del día o semana
+- latam: Brasil, Chile, Colombia, México — contexto regional breve
+- argentina: economía, mercados, política y empresas locales
+- ldwm: régimen de riesgo actual, drivers del día, implicancia para posicionamiento y qué mirar las próximas 48h
+
+Respondé SOLO con el JSON, sin texto adicional, sin backticks, sin markdown."""
+
+        client = anthropic.Anthropic(api_key=os.environ.get('ANTHROPIC_API_KEY'))
+
+        message = client.messages.create(
+            model='claude-opus-4-5',
+            max_tokens=4000,
+            messages=[{'role': 'user', 'content': prompt}]
+        )
+
+        import json
+        raw = message.content[0].text.strip()
+        # Limpiar posibles backticks
+        raw = raw.replace('```json', '').replace('```', '').strip()
+        parte = json.loads(raw)
+
+        return jsonify({'ok': True, 'data': parte})
+
+    except Exception as e:
+        return jsonify({'ok': False, 'msg': str(e)}), 500
+
+
+
 @app.route('/api/treasury', methods=['GET'])
 def api_treasury():
     """
