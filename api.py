@@ -192,117 +192,178 @@ Sin texto extra, sin backticks."""
         return jsonify({'ok': False, 'msg': str(e)}), 500
 
 
-
-# ── /api/fci/* ────────────────────────────────────────────
-
-from urllib.parse import quote as _url_quote
+# ── /api/fci/* ─────────────────────────────────────────────────────────────────
+# Fuente: https://api.pub.cafci.org.ar/pb_get
+# Planilla Excel publica diaria, sin autenticacion.
+# La API privada (api.cafci.org.ar) requiere auth (401 Unauthorized).
+# ──────────────────────────────────────────────────────────────────────────────
 
 def _safe_float(v):
-    try: return round(float(v), 4) if v not in (None, '', 'N/A') else None
-    except: return None
-
-CAFCI_H = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'application/json, text/plain, */*',
-    'Accept-Language': 'es-AR,es;q=0.9',
-    'Origin': 'https://www.cafci.org.ar',
-    'Referer': 'https://www.cafci.org.ar/',
-}
-
-def _cafci_get(url, timeout=15):
-    """GET a CAFCI URL. Raises descriptive Exception if response is not valid JSON."""
-    r = req.get(url, timeout=timeout, headers=CAFCI_H)
-    if r.status_code != 200:
-        raise Exception('CAFCI HTTP ' + str(r.status_code) + ': ' + r.text[:200])
-    text = r.text.strip()
-    if not text or text[0] not in ('{', '['):
-        raise Exception('CAFCI no-JSON (HTTP ' + str(r.status_code) + '): ' + text[:200])
-    return r.json()
-
-
-@app.route("/api/fci/search", methods=["GET"])
-def api_fci_search():
-    q = request.args.get("q", "").strip()
-    if not q or len(q) < 2:
-        return jsonify({"ok": False, "msg": "q requerido (min 2 chars)"}), 400
     try:
-        j = _cafci_get("https://api.cafci.org.ar/fondo?nombre=" + _url_quote(q) + "&limit=40&estado=1")
-        results = []
-        for f in (j.get("data") or []):
-            gest = f.get("gestora") or {}
-            tipo = f.get("tipoFondo") or {}
-            for c in (f.get("clases") or []):
-                results.append({
-                    "fondoId": f.get("id"),
-                    "claseId": c.get("id"),
-                    "nombre":  f.get("nombre", ""),
-                    "clase":   c.get("nombre", ""),
-                    "gerente": gest.get("nombre", "") if isinstance(gest, dict) else "",
-                    "tipo":    tipo.get("nombre", "") if isinstance(tipo, dict) else "",
-                    "moneda":  c.get("moneda", ""),
-                })
-        return jsonify({"ok": True, "data": results})
-    except Exception as e:
-        return jsonify({"ok": False, "msg": str(e)}), 500
+        return round(float(v), 4) if v not in (None, '', 'N/A') else None
+    except Exception:
+        return None
 
-@app.route('/api/fci/debug', methods=['GET'])
-def api_fci_debug():
-    out = {}
-    tests = [
-        ('search_balanz', 'https://api.cafci.org.ar/fondo?nombre=balanz&limit=3&estado=1'),
-        ('ficha_847_2409', 'https://api.cafci.org.ar/fondo/847/clase/2409/ficha'),
-    ]
-    for label, url in tests:
+_CAFCI_XLS_CACHE = {'rows': None, 'header': None, 'ts': 0}
+
+def _cafci_load_xls():
+    """Descarga y parsea la planilla diaria publica de CAFCI. Cachea 4 horas."""
+    import time, io
+    import openpyxl
+    now = time.time()
+    if _CAFCI_XLS_CACHE['rows'] and now - _CAFCI_XLS_CACHE['ts'] < 4 * 3600:
+        return _CAFCI_XLS_CACHE['rows'], _CAFCI_XLS_CACHE['header']
+
+    r = req.get(
+        'https://api.pub.cafci.org.ar/pb_get', timeout=25,
+        headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.cafci.org.ar/'}
+    )
+    if r.status_code != 200:
+        raise Exception(f'CAFCI planilla HTTP {r.status_code}')
+
+    wb = openpyxl.load_workbook(io.BytesIO(r.content), read_only=True, data_only=True)
+    ws = wb.active
+
+    header = None
+    rows = []
+    for row in ws.iter_rows(values_only=True):
+        if all(c is None for c in row):
+            continue
+        if header is None:
+            header = [str(c).strip().lower() if c is not None else f'_col{i}'
+                      for i, c in enumerate(row)]
+            continue
+        rows.append(dict(zip(header, row)))
+    wb.close()
+
+    _CAFCI_XLS_CACHE['rows'] = rows
+    _CAFCI_XLS_CACHE['header'] = header
+    _CAFCI_XLS_CACHE['ts'] = now
+    return rows, header
+
+
+def _col(row, *candidates):
+    """Busca el primer candidato en el dict row por substring match."""
+    for c in candidates:
+        cl = c.lower()
+        if cl in row and row[cl] is not None:
+            return row[cl]
+        for k, v in row.items():
+            if cl in k and v is not None:
+                return v
+    return None
+
+
+def _rows_to_fondos(rows):
+    fondos = {}
+    for row in rows:
+        fid    = _col(row, 'idfondo', 'id fondo', 'id_fondo', 'fondo_id')
+        cid    = _col(row, 'idclase', 'id clase', 'id_clase', 'clase_id')
+        nombre = _col(row, 'denominacion', 'nombre fondo', 'nombre_fondo', 'fondo')
+        if not fid or not cid or not nombre:
+            continue
         try:
-            r = req.get(url, timeout=10, headers=CAFCI_H)
-            out[label] = {'status': r.status_code, 'preview': r.text[:400]}
-        except Exception as e:
-            out[label] = {'error': str(e)}
-    return jsonify(out)
+            fid, cid = int(float(str(fid))), int(float(str(cid)))
+        except Exception:
+            continue
+        key = f'{fid};{cid}'
+        fondos[key] = {
+            'fondoId':    fid,
+            'claseId':    cid,
+            'nombre':     str(nombre).strip(),
+            'gerente':    str(_col(row, 'gerente', 'sociedad gerente', 'soc. gerente') or '').strip(),
+            'tipo':       str(_col(row, 'tipo fondo', 'tipo_fondo', 'tipo', 'horizonte') or '').strip(),
+            'moneda':     str(_col(row, 'moneda', 'currency') or 'ARS').strip(),
+            'vcp':        _safe_float(_col(row, 'vcp', 'valor cuotaparte', 'vcpunitario')),
+            'patrimonio': _safe_float(_col(row, 'patrimonio', 'patrimonio neto', 'patrim')),
+            'rendimientos': {
+                'day':   _safe_float(_col(row, 'rend. dia', 'rend dia', 'rendimiento dia', 'diario')),
+                'week':  _safe_float(_col(row, 'rend. semana', 'semanal', 'semana')),
+                'month': _safe_float(_col(row, 'rend. mes', 'mensual', 'mes')),
+                'ytd':   _safe_float(_col(row, 'ytd', 'año corriente', 'rend. año', 'anual ytd')),
+                'year':  _safe_float(_col(row, '12 meses', '12m', 'ultimos 12', 'ultimo año', '1 año')),
+            },
+        }
+    return fondos
+
+
+@app.route('/api/fci/search', methods=['GET'])
+def api_fci_search():
+    q = request.args.get('q', '').strip().lower()
+    if not q or len(q) < 2:
+        return jsonify({'ok': False, 'msg': 'q requerido (min 2 chars)'}), 400
+    try:
+        rows, _ = _cafci_load_xls()
+        fondos = _rows_to_fondos(rows)
+        results = [f for f in fondos.values() if q in f['nombre'].lower()][:40]
+        results.sort(key=lambda f: (0 if f['nombre'].lower().startswith(q) else 1, f['nombre']))
+        return jsonify({'ok': True, 'data': results, 'total': len(fondos)})
+    except Exception as e:
+        return jsonify({'ok': False, 'msg': str(e)}), 500
 
 
 @app.route('/api/fci/ficha', methods=['GET'])
 def api_fci_ficha():
-    fid, cid = request.args.get('fondo'), request.args.get('clase')
-    if not fid or not cid: return jsonify({'ok':False,'msg':'fondo y clase requeridos'}), 400
+    fid_s = request.args.get('fondo')
+    cid_s = request.args.get('clase')
+    if not fid_s or not cid_s:
+        return jsonify({'ok': False, 'msg': 'fondo y clase requeridos'}), 400
     try:
-        d = req.get(f'https://api.cafci.org.ar/fondo/{fid}/clase/{cid}/ficha', timeout=10, headers=CAFCI_H).json().get('data',{})
-        diaria = (d.get('info') or {}).get('diaria',{})
-        rend   = diaria.get('rendimientos',{})
-        actual = diaria.get('actual',{})
-        fi     = d.get('fondo',{})
-        return jsonify({'ok':True,'data':{
-            'fondoId': int(fid), 'claseId': int(cid),
-            'nombre':  fi.get('nombre', d.get('nombre','')),
-            'gerente': (fi.get('gestora') or {}).get('nombre',''),
-            'tipo':    (fi.get('tipoFondo') or {}).get('nombre',''),
-            'moneda':  d.get('moneda',''),
-            'vcp':     actual.get('vcp') or diaria.get('vcp'),
-            'patrimonio': actual.get('patrimonio'),
-            'fecha':   diaria.get('referenceDay'),
-            'rendimientos': {
-                'day':   _safe_float((rend.get('day')   or {}).get('rendimiento')),
-                'week':  _safe_float((rend.get('week')  or {}).get('rendimiento')),
-                'month': _safe_float((rend.get('month') or {}).get('rendimiento')),
-                'ytd':   _safe_float((rend.get('ytd')   or {}).get('rendimiento')),
-                'year':  _safe_float((rend.get('year')  or {}).get('rendimiento')),
-            }
-        }})
-    except Exception as e: return jsonify({'ok':False,'msg':str(e)}), 500
+        fid, cid = int(fid_s), int(cid_s)
+        rows, _ = _cafci_load_xls()
+        fondos = _rows_to_fondos(rows)
+        key = f'{fid};{cid}'
+        f = fondos.get(key)
+        if not f:
+            return jsonify({'ok': False, 'msg': f'Fondo {fid}/{cid} no encontrado en planilla'}), 404
+        return jsonify({'ok': True, 'data': f})
+    except Exception as e:
+        return jsonify({'ok': False, 'msg': str(e)}), 500
+
 
 @app.route('/api/fci/historico', methods=['GET'])
 def api_fci_historico():
+    """Serie historica de VCP via api.pub.cafci.org.ar."""
     fid  = request.args.get('fondo')
     cid  = request.args.get('clase')
     from_d = request.args.get('desde')
     to_d   = request.args.get('hasta')
-    if not all([fid,cid,from_d,to_d]): return jsonify({'ok':False,'msg':'fondo clase desde hasta requeridos'}), 400
+    if not all([fid, cid, from_d, to_d]):
+        return jsonify({'ok': False, 'msg': 'fondo clase desde hasta requeridos'}), 400
     try:
-        def fmt(d): y,m,day=d.split('-'); return f'{day}-{m}-{y}'
-        items = req.get(f'https://api.cafci.org.ar/fondo/{fid}/clase/{cid}/rendimiento/{fmt(from_d)}/{fmt(to_d)}', timeout=15, headers=CAFCI_H).json().get('data',[])
-        series = [{'fecha':it['fecha'],'vcp':float(it['vcp'])} for it in items if isinstance(it,dict) and it.get('fecha') and it.get('vcp') is not None]
-        return jsonify({'ok':True,'data':series})
-    except Exception as e: return jsonify({'ok':False,'msg':str(e)}), 500
+        def fmt(d):
+            y, m, day = d.split('-')
+            return f'{day}-{m}-{y}'
+        url = f'https://api.pub.cafci.org.ar/fondo/{fid}/clase/{cid}/rendimiento/{fmt(from_d)}/{fmt(to_d)}'
+        r = req.get(url, timeout=20,
+                    headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.cafci.org.ar/'})
+        if r.status_code != 200:
+            return jsonify({'ok': True, 'data': []})
+        items = r.json().get('data', [])
+        series = [
+            {'fecha': it['fecha'], 'vcp': float(it['vcp'])}
+            for it in items
+            if isinstance(it, dict) and it.get('fecha') and it.get('vcp') is not None
+        ]
+        return jsonify({'ok': True, 'data': series})
+    except Exception as e:
+        return jsonify({'ok': False, 'msg': str(e)}), 500
+
+
+@app.route('/api/fci/debug', methods=['GET'])
+def api_fci_debug():
+    """Muestra columnas y primeras 3 filas del Excel para diagnosticar."""
+    try:
+        rows, header = _cafci_load_xls()
+        return jsonify({
+            'ok': True,
+            'total_rows': len(rows),
+            'columns': header,
+            'sample': rows[:3]
+        })
+    except Exception as e:
+        return jsonify({'ok': False, 'msg': str(e)}), 500
+
 
 @app.route('/api/treasury', methods=['GET'])
 def api_treasury():
