@@ -211,9 +211,56 @@ def _safe_float(v):
 
 # Cache: fecha_str -> {nombre_lower -> {fondo,fecha,vcp,patrimonio,horizonte}}
 _AD_CACHE     = {}   # fecha_str -> fondos_dict
-_AD_CACHE_TS  = {}   # fecha_str -> timestamp (solo para 'ultimo')
+_AD_CACHE = {}   # 'ultimo'|'penultimo' -> {nombre_lower -> fondo_dict}
+_AD_TS    = {}   # -> timestamp
 
-def _calc_rendimientos(nombre, vcp_hoy):
+def _load_ad(slot='ultimo'):
+    """Carga todos los tipos de FCI para ultimo o penultimo. Cachea 4h."""
+    import time
+    now = time.time()
+    if slot in _AD_CACHE and now - _AD_TS.get(slot, 0) < 4 * 3600:
+        return _AD_CACHE[slot]
+    fondos = {}
+    for tipo in _AD_TIPOS:
+        try:
+            r = req.get(f'{_AD_BASE}/{tipo}/{slot}', timeout=15, headers=_AD_H)
+            if r.status_code != 200:
+                continue
+            items = r.json()
+            if not isinstance(items, list):
+                continue
+            for it in items:
+                nombre = str(it.get('fondo') or '').strip()
+                vcp    = _safe_float(it.get('vcp'))
+                if not nombre or vcp is None:
+                    continue
+                fondos[nombre.lower()] = {
+                    'nombre':     nombre,
+                    'tipo':       tipo,
+                    'fecha':      str(it.get('fecha') or ''),
+                    'vcp':        vcp,
+                    'patrimonio': _safe_float(it.get('patrimonio')),
+                    'horizonte':  str(it.get('horizonte') or ''),
+                }
+        except Exception:
+            continue
+    _AD_CACHE[slot] = fondos
+    _AD_TS[slot]    = now
+    return fondos
+
+
+def _find(fondos, query):
+    """Busca fondo por nombre: exacto, prefijo, o contiene."""
+    ql = query.strip().lower()
+    if ql in fondos:
+        return fondos[ql]
+    starts = [f for k, f in fondos.items() if k.startswith(ql)]
+    if starts:
+        return starts[0]
+    contains = [f for k, f in fondos.items() if ql in k]
+    return contains[0] if contains else None
+
+
     """
     Rendimiento diario: /ultimo vs /penultimo.
     Rendimientos semana/mes/YTD/año: desde Google Sheets (acumulado con /tick).
