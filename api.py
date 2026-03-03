@@ -193,133 +193,97 @@ Sin texto extra, sin backticks."""
 
 
 # ── /api/fci/* ─────────────────────────────────────────────────────────────────
-# Fuente: https://api.pub.cafci.org.ar/pb_get  (Excel publico, sin auth)
-#
-# Estructura confirmada:
-#   Filas 0-5: encabezados varios (vacías, título, dirección, reporte, vacías)
-#   Fila 6:    headers — col0="Fondo", col5="Valor(mil cuotapartes)",
-#              col9="Variación%", col14="Patrimonio", col20="Código CAFCI"(=fondoId),
-#              col23="Sociedad Gerente", col36="Moneda Fondo"
-#   Fila 7+:   datos
-#
-# Para rendimientos historicos: el endpoint acepta ?fecha=DD-MM-YYYY
-# Comparamos VCPs entre fechas para calcular rendimientos acumulados.
+# Fuente: api.argentinadatos.com (pública, sin auth, datos de CAFCI)
+# Endpoints base: /v1/finanzas/fci/{tipo}/{fecha}  fecha = "ultimo" o "YYYY/MM/DD"
+# Tipos: mercadoDinero, rentaFija, rentaVariable, rentaMixta, otros
+# Respuesta: [{fondo, fecha, vcp, ccp, patrimonio, horizonte}]
 # ──────────────────────────────────────────────────────────────────────────────
 
-_PUB_H = {'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.cafci.org.ar/'}
-
-_CI = {
-    'nombre': 0, 'tipo': 1, 'fecha': 4, 'vcp': 5,
-    'rend_dia': 9, 'patrimonio': 14, 'cafci_id': 20,
-    'gerente': 23, 'moneda': 36,
-}
+_AD_BASE  = 'https://api.argentinadatos.com/v1/finanzas/fci'
+_AD_TIPOS = ['mercadoDinero', 'rentaFija', 'rentaVariable', 'rentaMixta', 'otros']
+_AD_H     = {'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json'}
 
 def _safe_float(v):
     try:
-        return round(float(v), 4) if v not in (None, '', 'N/A') else None
+        return round(float(v), 6) if v not in (None, '', 'N/A') else None
     except Exception:
         return None
 
-def _get_col(cols, key):
-    idx = _CI.get(key)
-    return cols[idx] if idx is not None and idx < len(cols) else None
+# Cache: fecha_str -> {nombre_lower -> {fondo,fecha,vcp,patrimonio,horizonte}}
+_AD_CACHE     = {}   # fecha_str -> fondos_dict
+_AD_CACHE_TS  = {}   # fecha_str -> timestamp (solo para 'ultimo')
 
-def _parse_xls(content):
-    """Parsea bytes del Excel CAFCI. Retorna dict nombre->fondo_dict."""
-    import io, openpyxl
-    wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
-    ws = wb.active
-    fondos = {}
-    header_found = False
-    for row in ws.iter_rows(values_only=True):
-        if not header_found:
-            if row[0] is not None and str(row[0]).strip().lower() == 'fondo':
-                header_found = True
-            continue
-        cols = list(row)
-        nombre = _get_col(cols, 'nombre')
-        cafci_id = _get_col(cols, 'cafci_id')
-        if not nombre or not cafci_id:
-            continue
-        try:
-            fid = int(float(str(cafci_id).strip()))
-        except Exception:
-            continue
-        nombre_str = str(nombre).strip()
-        fondos[nombre_str] = {
-            'fondoId':    fid,
-            'nombre':     nombre_str,
-            'gerente':    str(_get_col(cols, 'gerente') or '').strip(),
-            'tipo':       str(_get_col(cols, 'tipo') or '').strip(),
-            'moneda':     str(_get_col(cols, 'moneda') or 'ARS').strip(),
-            'vcp':        _safe_float(_get_col(cols, 'vcp')),
-            'patrimonio': _safe_float(_get_col(cols, 'patrimonio')),
-            'rend_dia':   _safe_float(_get_col(cols, 'rend_dia')),
-        }
-    wb.close()
-    return fondos
-
-# Cache del Excel por fecha: fecha_str (DD-MM-YYYY o 'today') -> {nombre: vcp}
-_XLS_VCP_CACHE = {}
-_XLS_TODAY_CACHE = {'fondos': None, 'ts': 0}
-
-def _load_today():
-    """Descarga y cachea el Excel de hoy. Retorna dict nombre->fondo."""
+def _load_fecha(fecha_str):
+    """
+    Descarga todos los tipos de FCI para una fecha dada.
+    fecha_str: 'ultimo' | 'YYYY/MM/DD'
+    Retorna dict: nombre_lower -> fondo_dict
+    """
     import time
     now = time.time()
-    if _XLS_TODAY_CACHE['fondos'] and now - _XLS_TODAY_CACHE['ts'] < 4 * 3600:
-        return _XLS_TODAY_CACHE['fondos']
-    r = req.get('https://api.pub.cafci.org.ar/pb_get', timeout=25, headers=_PUB_H)
-    if r.status_code != 200:
-        raise Exception(f'CAFCI planilla HTTP {r.status_code}')
-    fondos = _parse_xls(r.content)
-    if not fondos:
-        raise Exception('No se parseo ningun fondo')
-    _XLS_TODAY_CACHE['fondos'] = fondos
-    _XLS_TODAY_CACHE['ts'] = now
-    return fondos
+    # 'ultimo' se cachea 4h; fechas pasadas indefinidamente
+    if fecha_str in _AD_CACHE:
+        if fecha_str != 'ultimo' or now - _AD_CACHE_TS.get(fecha_str, 0) < 4 * 3600:
+            return _AD_CACHE[fecha_str]
 
-def _vcps_at(target_date):
-    """
-    VCPs de todos los fondos en target_date (o el dia habill anterior).
-    Retorna dict nombre->vcp. Cachea indefinidamente.
-    """
-    from datetime import timedelta
-    for delta in range(0, 6):
-        d = target_date - timedelta(days=delta)
-        dstr = d.strftime('%d-%m-%Y')
-        if dstr in _XLS_VCP_CACHE:
-            return _XLS_VCP_CACHE[dstr]
+    fondos = {}
+    for tipo in _AD_TIPOS:
+        url = f'{_AD_BASE}/{tipo}/{fecha_str}'
         try:
-            url = f'https://api.pub.cafci.org.ar/pb_get?fecha={dstr}'
-            r = req.get(url, timeout=20, headers=_PUB_H)
+            r = req.get(url, timeout=15, headers=_AD_H)
             if r.status_code != 200:
                 continue
-            ct = r.headers.get('content-type', '')
-            if 'html' in ct or len(r.content) < 5000:
+            items = r.json()
+            if not isinstance(items, list):
                 continue
-            fondos = _parse_xls(r.content)
-            if not fondos:
-                continue
-            vcps = {n: f['vcp'] for n, f in fondos.items() if f['vcp']}
-            _XLS_VCP_CACHE[dstr] = vcps
-            return vcps
+            for it in items:
+                nombre = str(it.get('fondo') or '').strip()
+                if not nombre:
+                    continue
+                fondos[nombre.lower()] = {
+                    'nombre':     nombre,
+                    'tipo':       tipo,
+                    'fecha':      str(it.get('fecha') or ''),
+                    'vcp':        _safe_float(it.get('vcp')),
+                    'ccp':        _safe_float(it.get('ccp')),
+                    'patrimonio': _safe_float(it.get('patrimonio')),
+                    'horizonte':  str(it.get('horizonte') or ''),
+                }
         except Exception:
             continue
-    return {}
 
-_REND_CACHE = {}  # nombre -> {'data': {...}, 'ts': float}
+    _AD_CACHE[fecha_str] = fondos
+    _AD_CACHE_TS[fecha_str] = now
+    return fondos
+
+
+def _find_fondo(fondos, query):
+    """Busca un fondo por nombre exacto (case-insensitive) o parcial."""
+    ql = query.strip().lower()
+    # Exact match
+    if ql in fondos:
+        return fondos[ql]
+    # Partial match - prefer startswith
+    starts = [f for k, f in fondos.items() if k.startswith(ql)]
+    if starts:
+        return starts[0]
+    contains = [f for k, f in fondos.items() if ql in k]
+    if contains:
+        return contains[0]
+    return None
+
 
 def _calc_rendimientos(nombre, vcp_hoy):
-    """Calcula rendimientos comparando VCP de hoy vs fechas historicas."""
+    """
+    Calcula rendimientos semanal/mensual/YTD/anual comparando VCPs de
+    distintas fechas usando la API de ArgentinaDatos.
+    """
     import time
     from datetime import date, timedelta
-    now = time.time()
-    cached = _REND_CACHE.get(nombre)
-    if cached and now - cached['ts'] < 4 * 3600:
-        return cached['data']
+
     if not vcp_hoy:
         return {'week': None, 'month': None, 'ytd': None, 'year': None}
+
     today = date.today()
     targets = {
         'week':  today - timedelta(days=7),
@@ -327,13 +291,36 @@ def _calc_rendimientos(nombre, vcp_hoy):
         'ytd':   date(today.year, 1, 1),
         'year':  today - timedelta(days=365),
     }
+
     result = {}
     for period, target_date in targets.items():
-        vcps = _vcps_at(target_date)
-        base = vcps.get(nombre)
-        result[period] = round((vcp_hoy / base - 1) * 100, 4) if base else None
-    _REND_CACHE[nombre] = {'data': result, 'ts': now}
+        base_vcp = None
+        # Buscar hasta 5 dias anteriores (feriados/findes)
+        for delta in range(0, 6):
+            d = target_date - timedelta(days=delta)
+            fecha_str = d.strftime('%Y/%m/%d')
+            fondos = _load_fecha(fecha_str)
+            f = _find_fondo(fondos, nombre)
+            if f and f.get('vcp'):
+                base_vcp = f['vcp']
+                break
+        result[period] = round((vcp_hoy / base_vcp - 1) * 100, 4) if base_vcp else None
+
     return result
+
+
+_REND_CACHE = {}   # nombre_lower -> {'data': {...}, 'ts': float}
+
+def _calc_rendimientos_cached(nombre, vcp_hoy):
+    import time
+    key = nombre.lower()
+    now = time.time()
+    cached = _REND_CACHE.get(key)
+    if cached and now - cached['ts'] < 4 * 3600:
+        return cached['data']
+    data = _calc_rendimientos(nombre, vcp_hoy)
+    _REND_CACHE[key] = {'data': data, 'ts': now}
+    return data
 
 
 @app.route('/api/fci/search', methods=['GET'])
@@ -342,26 +329,25 @@ def api_fci_search():
     if not q or len(q) < 2:
         return jsonify({'ok': False, 'msg': 'q requerido (min 2 chars)'}), 400
     try:
-        fondos = _load_today()
+        fondos = _load_fecha('ultimo')
         results = []
-        for nombre, f in fondos.items():
-            if q in nombre.lower():
+        for k, f in fondos.items():
+            if q in k:
                 results.append({
-                    'fondoId':    f['fondoId'],
-                    'claseId':    f['fondoId'],
-                    'nombre':     nombre,
-                    'gerente':    f['gerente'],
+                    'fondoId':    abs(hash(f['nombre'])) % 1000000,
+                    'claseId':    abs(hash(f['nombre'])) % 1000000,
+                    'nombre':     f['nombre'],
+                    'gerente':    '',
                     'tipo':       f['tipo'],
-                    'moneda':     f['moneda'],
+                    'moneda':     'ARS',
                     'vcp':        f['vcp'],
                     'patrimonio': f['patrimonio'],
                     'rendimientos': {
-                        'day': f['rend_dia'],
-                        'week': None, 'month': None, 'ytd': None, 'year': None
+                        'day': None, 'week': None, 'month': None, 'ytd': None, 'year': None
                     },
                 })
-        results = results[:40]
         results.sort(key=lambda x: (0 if x['nombre'].lower().startswith(q) else 1, x['nombre']))
+        results = results[:40]
         return jsonify({'ok': True, 'data': results, 'total': len(fondos)})
     except Exception as e:
         return jsonify({'ok': False, 'msg': str(e)}), 500
@@ -370,45 +356,31 @@ def api_fci_search():
 @app.route('/api/fci/ficha', methods=['GET'])
 def api_fci_ficha():
     """
-    Devuelve datos + rendimientos completos para un fondo.
-    Parametros: ?nombre=<nombre exacto>  o  ?fondo=<fondoId>  y  ?clase=<claseId>
-    Los rendimientos historicos se calculan comparando VCPs entre fechas.
+    Acepta: ?nombre=<nombre> o ?fondo=<id>&clase=<id> (id = hash del nombre, ignorado)
+    Busca en ArgentinaDatos y calcula rendimientos históricos.
     """
     nombre_q = request.args.get('nombre', '').strip()
-    fid_s    = request.args.get('fondo', '').strip()
-    if not nombre_q and not fid_s:
-        return jsonify({'ok': False, 'msg': 'nombre o fondo requerido'}), 400
+    # Si viene el nombre serializado en el fondo (desde search), úsalo directo
+    # Si no, no podemos resolver por ID (el hash no es reversible) → error descriptivo
+    if not nombre_q:
+        return jsonify({'ok': False, 'msg': 'Usar ?nombre=<nombre del fondo>'}), 400
     try:
-        fondos = _load_today()
-        f = None
-        if nombre_q:
-            f = fondos.get(nombre_q)
-            if not f:
-                ql = nombre_q.lower()
-                for n, fd in fondos.items():
-                    if ql in n.lower():
-                        f = fd
-                        break
-        else:
-            fid = int(fid_s)
-            for fd in fondos.values():
-                if fd['fondoId'] == fid:
-                    f = fd
-                    break
+        fondos = _load_fecha('ultimo')
+        f = _find_fondo(fondos, nombre_q)
         if not f:
-            return jsonify({'ok': False, 'msg': 'Fondo no encontrado'}), 404
+            return jsonify({'ok': False, 'msg': f'Fondo "{nombre_q}" no encontrado'}), 404
 
-        hist = _calc_rendimientos(f['nombre'], f['vcp'])
+        hist = _calc_rendimientos_cached(f['nombre'], f['vcp'])
         return jsonify({'ok': True, 'data': {
-            'fondoId':    f['fondoId'],
-            'claseId':    f['fondoId'],
+            'fondoId':    abs(hash(f['nombre'])) % 1000000,
+            'claseId':    abs(hash(f['nombre'])) % 1000000,
             'nombre':     f['nombre'],
-            'gerente':    f['gerente'],
+            'gerente':    '',
             'tipo':       f['tipo'],
-            'moneda':     f['moneda'],
+            'moneda':     'ARS',
             'vcp':        f['vcp'],
             'patrimonio': f['patrimonio'],
-            'rendimientos': {'day': f['rend_dia'], **hist},
+            'rendimientos': {'day': None, **hist},
         }})
     except Exception as e:
         return jsonify({'ok': False, 'msg': str(e)}), 500
@@ -416,65 +388,62 @@ def api_fci_ficha():
 
 @app.route('/api/fci/historico', methods=['GET'])
 def api_fci_historico():
-    nombre_q = request.args.get("nombre", "").strip()
-    fid_s    = request.args.get("fondo", "").strip()
-    from_d   = request.args.get("desde", "").strip()
-    to_d     = request.args.get("hasta", "").strip()
-    if not from_d or not to_d:
-        return jsonify({"ok": False, "msg": "desde y hasta requeridos"}), 400
-    if not nombre_q and not fid_s:
-        return jsonify({"ok": False, "msg": "nombre o fondo requerido"}), 400
+    """
+    Serie histórica de VCP entre dos fechas.
+    Acepta: ?nombre=<nombre>&desde=YYYY-MM-DD&hasta=YYYY-MM-DD
+    """
+    nombre_q = request.args.get('nombre', '').strip()
+    from_d   = request.args.get('desde', '').strip()
+    to_d     = request.args.get('hasta', '').strip()
+    if not nombre_q or not from_d or not to_d:
+        return jsonify({'ok': False, 'msg': 'nombre, desde y hasta requeridos'}), 400
     try:
         from datetime import date, timedelta
-        if not nombre_q and fid_s:
-            fid = int(fid_s)
-            for fd in _load_today().values():
-                if fd["fondoId"] == fid:
-                    nombre_q = fd["nombre"]
-                    break
-        if not nombre_q:
-            return jsonify({"ok": False, "msg": "Fondo no encontrado"}), 404
-        y0,m0,d0 = from_d.split("-"); y1,m1,d1 = to_d.split("-")
-        start = date(int(y0),int(m0),int(d0)); end = date(int(y1),int(m1),int(d1))
-        step = max(1,(end-start).days//25)
-        series=[]; d=start
-        while d<=end:
-            vcps=_vcps_at(d); vcp=vcps.get(nombre_q)
-            if vcp: series.append({"fecha":d.strftime("%Y-%m-%d"),"vcp":vcp})
-            d+=timedelta(days=step)
-        return jsonify({"ok":True,"data":series})
-    except Exception as e: return jsonify({"ok":False,"msg":str(e)}),500
+        y0,m0,d0 = from_d.split('-'); y1,m1,d1 = to_d.split('-')
+        start = date(int(y0), int(m0), int(d0))
+        end   = date(int(y1), int(m1), int(d1))
+        delta = (end - start).days
+        step  = max(1, delta // 30)  # max ~30 puntos
 
+        series = []
+        d = start
+        while d <= end:
+            fecha_str = d.strftime('%Y/%m/%d')
+            fondos = _load_fecha(fecha_str)
+            f = _find_fondo(fondos, nombre_q)
+            if f and f.get('vcp'):
+                series.append({'fecha': d.strftime('%Y-%m-%d'), 'vcp': f['vcp']})
+            d += timedelta(days=step)
+
+        return jsonify({'ok': True, 'data': series})
+    except Exception as e:
+        return jsonify({'ok': False, 'msg': str(e)}), 500
 
 
 @app.route('/api/fci/debug', methods=['GET'])
 def api_fci_debug():
-    """Testa el endpoint de rendimiento historico de api.pub.cafci.org.ar"""
+    """Test rápido de ArgentinaDatos FCI API."""
     from datetime import date, timedelta
-    today = date.today()
-    desde = today - timedelta(days=30)
-    def dfmt(d): return d.strftime('%d-%m-%Y')
     results = {}
-    # Probar con distintos fondos conocidos
-    test_cases = [
-        ('fondo_193',        f'https://api.pub.cafci.org.ar/fondo/193/clase/193/rendimiento/{dfmt(desde)}/{dfmt(today)}'),
-        ('fondo_193_cls_0',  f'https://api.pub.cafci.org.ar/fondo/193/clase/0/rendimiento/{dfmt(desde)}/{dfmt(today)}'),
-        ('fondo_5272_pub',   f'https://api.pub.cafci.org.ar/fondo/5272/clase/5272/rendimiento/{dfmt(desde)}/{dfmt(today)}'),
-        ('fondo_847_priv',   f'https://api.cafci.org.ar/fondo/847/clase/2409/rendimiento/{dfmt(desde)}/{dfmt(today)}'),
+    tests = [
+        ('ultimo',     f'{_AD_BASE}/mercadoDinero/ultimo'),
+        ('rentaFija',  f'{_AD_BASE}/rentaFija/ultimo'),
+        ('fecha_mes',  f'{_AD_BASE}/mercadoDinero/{(date.today()-timedelta(days=30)).strftime("%Y/%m/%d")}'),
     ]
-    for label, url in test_cases:
+    for label, url in tests:
         try:
-            r = req.get(url, timeout=10, headers=_PUB_H)
-            t = r.text.strip()
+            r = req.get(url, timeout=10, headers=_AD_H)
+            items = r.json() if r.status_code == 200 else []
             results[label] = {
-                'url': url,
                 'status': r.status_code,
-                'content_type': r.headers.get('content-type',''),
-                'preview': t[:300],
+                'count': len(items) if isinstance(items, list) else 0,
+                'sample': items[:2] if isinstance(items, list) else items,
             }
         except Exception as e:
-            results[label] = {'url': url, 'error': str(e)}
+            results[label] = {'error': str(e)}
     return jsonify({'ok': True, 'results': results})
+
+
 
 @app.route('/api/treasury', methods=['GET'])
 def api_treasury():
