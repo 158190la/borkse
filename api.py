@@ -195,25 +195,24 @@ Sin texto extra, sin backticks."""
 # ── /api/fci/* ─────────────────────────────────────────────────────────────────
 # Fuente: https://api.pub.cafci.org.ar/pb_get  (Excel publico, sin auth)
 #
-# Estructura real del Excel (confirmada via /api/fci/debug):
-#   Fila 1: titulo "Camara Argentina de Fondos Comunes de Inversion"
-#   Fila 2: direccion
-#   Fila 3: descripcion "Reporte: Planilla Diaria"
-#   Fila 4: HEADERS REALES (columna 0 = "Fondo", _col1 = "Clasificacion", etc.)
-#   Fila 5+: datos
+# Estructura confirmada:
+#   Filas 0-5: encabezados varios (vacías, título, dirección, reporte, vacías)
+#   Fila 6:    headers — col0="Fondo", col5="Valor(mil cuotapartes)",
+#              col9="Variación%", col14="Patrimonio", col20="Código CAFCI"(=fondoId),
+#              col23="Sociedad Gerente", col36="Moneda Fondo"
+#   Fila 7+:   datos
 #
-# Columnas relevantes (por posicion, 0-indexed):
-#   0  = Fondo (nombre fondo - clase, ej: "FIMA Premium - Clase A")
-#   1  = Clasificacion (tipo horizonte)
-#   4  = Fecha
-#   5  = Valor (mil cuotapartes) = VCP x 1000
-#   9  = Variacion cuotaparte %  = rendimiento diario
-#   14 = Patrimonio
-#   20 = Codigo CAFCI            = "fondoId;claseId"
-#   23 = Sociedad Gerente
-#   25 = Codigo de Moneda
-#   36 = Moneda Fondo (nombre)
+# Para rendimientos historicos: el endpoint acepta ?fecha=DD-MM-YYYY
+# Comparamos VCPs entre fechas para calcular rendimientos acumulados.
 # ──────────────────────────────────────────────────────────────────────────────
+
+_PUB_H = {'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.cafci.org.ar/'}
+
+_CI = {
+    'nombre': 0, 'tipo': 1, 'fecha': 4, 'vcp': 5,
+    'rend_dia': 9, 'patrimonio': 14, 'cafci_id': 20,
+    'gerente': 23, 'moneda': 36,
+}
 
 def _safe_float(v):
     try:
@@ -221,126 +220,120 @@ def _safe_float(v):
     except Exception:
         return None
 
-_CAFCI_XLS_CACHE = {'fondos': None, 'ts': 0}
+def _get_col(cols, key):
+    idx = _CI.get(key)
+    return cols[idx] if idx is not None and idx < len(cols) else None
 
-# Mapeo de posicion de columna (0-indexed) a nombre semantico
-# Basado en la fila de headers real (fila 4 del Excel)
-_COL_IDX = {
-    'nombre':      0,   # "Fondo" -> "FIMA Premium - Clase A"
-    'tipo':        1,   # "Clasificacion"
-    'fecha':       4,   # "Fecha"
-    'vcp':         5,   # "Valor (mil cuotapartes)"
-    'rend_dia':    9,   # "Variacion cuotaparte %"
-    'patrimonio':  14,  # "Patrimonio"
-    'cafci_code':  20,  # "Codigo CAFCI" -> "fondoId;claseId"
-    'gerente':     23,  # "Sociedad Gerente"
-    'cod_moneda':  25,  # "Codigo de Moneda"
-    'moneda':      36,  # "Moneda Fondo"
-}
+def _parse_xls(content):
+    """Parsea bytes del Excel CAFCI. Retorna dict nombre->fondo_dict."""
+    import io, openpyxl
+    wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+    ws = wb.active
+    fondos = {}
+    header_found = False
+    for row in ws.iter_rows(values_only=True):
+        if not header_found:
+            if row[0] is not None and str(row[0]).strip().lower() == 'fondo':
+                header_found = True
+            continue
+        cols = list(row)
+        nombre = _get_col(cols, 'nombre')
+        cafci_id = _get_col(cols, 'cafci_id')
+        if not nombre or not cafci_id:
+            continue
+        try:
+            fid = int(float(str(cafci_id).strip()))
+        except Exception:
+            continue
+        nombre_str = str(nombre).strip()
+        fondos[nombre_str] = {
+            'fondoId':    fid,
+            'nombre':     nombre_str,
+            'gerente':    str(_get_col(cols, 'gerente') or '').strip(),
+            'tipo':       str(_get_col(cols, 'tipo') or '').strip(),
+            'moneda':     str(_get_col(cols, 'moneda') or 'ARS').strip(),
+            'vcp':        _safe_float(_get_col(cols, 'vcp')),
+            'patrimonio': _safe_float(_get_col(cols, 'patrimonio')),
+            'rend_dia':   _safe_float(_get_col(cols, 'rend_dia')),
+        }
+    wb.close()
+    return fondos
 
-def _cafci_load_fondos():
-    """
-    Descarga el Excel publico de CAFCI, salta las 3 filas de encabezado,
-    usa la fila 4 como header y parsea los datos desde la fila 5.
-    Cachea 4 horas.
-    """
-    import time, io
-    import openpyxl
+# Cache del Excel por fecha: fecha_str (DD-MM-YYYY o 'today') -> {nombre: vcp}
+_XLS_VCP_CACHE = {}
+_XLS_TODAY_CACHE = {'fondos': None, 'ts': 0}
+
+def _load_today():
+    """Descarga y cachea el Excel de hoy. Retorna dict nombre->fondo."""
+    import time
     now = time.time()
-    if _CAFCI_XLS_CACHE['fondos'] and now - _CAFCI_XLS_CACHE['ts'] < 4 * 3600:
-        return _CAFCI_XLS_CACHE['fondos']
-
-    r = req.get(
-        'https://api.pub.cafci.org.ar/pb_get', timeout=25,
-        headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.cafci.org.ar/'}
-    )
+    if _XLS_TODAY_CACHE['fondos'] and now - _XLS_TODAY_CACHE['ts'] < 4 * 3600:
+        return _XLS_TODAY_CACHE['fondos']
+    r = req.get('https://api.pub.cafci.org.ar/pb_get', timeout=25, headers=_PUB_H)
     if r.status_code != 200:
         raise Exception(f'CAFCI planilla HTTP {r.status_code}')
-
-    wb = openpyxl.load_workbook(io.BytesIO(r.content), read_only=True, data_only=True)
-    ws = wb.active
-
-    fondos = {}
-    header_row_found = False
-    skip_count = 0
-
-    for row in ws.iter_rows(values_only=True):
-        # Las primeras filas no-vacias son: titulo, direccion, descripcion, headers
-        # Detectamos la fila de headers buscando la celda que diga "Fondo" en col 0
-        # y "Clasificacion" o similar en col 1
-        if not header_row_found:
-            if row[0] is not None and str(row[0]).strip().lower() == 'fondo':
-                header_row_found = True
-            # tambien saltamos si es la fila con el titulo real (col1 = Clasificacion)
-            elif row[1] is not None and 'clasificaci' in str(row[1]).lower():
-                header_row_found = True
-            continue  # salta hasta encontrar el header
-
-        # A partir de aca son filas de datos
-        cols = list(row)
-        nombre_raw = cols[_COL_IDX['nombre']] if len(cols) > _COL_IDX['nombre'] else None
-        cafci_code = cols[_COL_IDX['cafci_code']] if len(cols) > _COL_IDX['cafci_code'] else None
-
-        if not nombre_raw or not cafci_code:
-            continue
-
-        # Codigo CAFCI: puede ser "847;2409" o numero entero/float
-        fid, cid = None, None
-        code_str = str(cafci_code).strip()
-        if ';' in code_str:
-            parts = code_str.split(';')
-            if len(parts) >= 2:
-                try:
-                    fid = int(float(parts[0]))
-                    cid = int(float(parts[1]))
-                except Exception:
-                    pass
-        else:
-            # Algunos archivos tienen solo el ID del fondo (sin clase separada)
-            # En ese caso usamos el codigo como fondoId y 0 como claseId placeholder
-            try:
-                fid = int(float(code_str))
-                cid = 0
-            except Exception:
-                pass
-
-        if fid is None:
-            continue
-
-        key = f'{fid};{cid}'
-        vcp_raw = cols[_COL_IDX['vcp']] if len(cols) > _COL_IDX['vcp'] else None
-        rend_raw = cols[_COL_IDX['rend_dia']] if len(cols) > _COL_IDX['rend_dia'] else None
-        pat_raw  = cols[_COL_IDX['patrimonio']] if len(cols) > _COL_IDX['patrimonio'] else None
-        ger_raw  = cols[_COL_IDX['gerente']] if len(cols) > _COL_IDX['gerente'] else None
-        tipo_raw = cols[_COL_IDX['tipo']] if len(cols) > _COL_IDX['tipo'] else None
-        mon_raw  = cols[_COL_IDX['moneda']] if len(cols) > _COL_IDX['moneda'] else None
-
-        fondos[key] = {
-            'fondoId':    fid,
-            'claseId':    cid,
-            'nombre':     str(nombre_raw).strip(),
-            'gerente':    str(ger_raw).strip() if ger_raw else '',
-            'tipo':       str(tipo_raw).strip() if tipo_raw else '',
-            'moneda':     str(mon_raw).strip() if mon_raw else 'ARS',
-            'vcp':        _safe_float(vcp_raw),
-            'patrimonio': _safe_float(pat_raw),
-            'rendimientos': {
-                'day':   _safe_float(rend_raw),
-                'week':  None,
-                'month': None,
-                'ytd':   None,
-                'year':  None,
-            },
-        }
-
-    wb.close()
-
+    fondos = _parse_xls(r.content)
     if not fondos:
-        raise Exception('No se parseo ningun fondo del Excel CAFCI')
-
-    _CAFCI_XLS_CACHE['fondos'] = fondos
-    _CAFCI_XLS_CACHE['ts'] = now
+        raise Exception('No se parseo ningun fondo')
+    _XLS_TODAY_CACHE['fondos'] = fondos
+    _XLS_TODAY_CACHE['ts'] = now
     return fondos
+
+def _vcps_at(target_date):
+    """
+    VCPs de todos los fondos en target_date (o el dia habill anterior).
+    Retorna dict nombre->vcp. Cachea indefinidamente.
+    """
+    from datetime import timedelta
+    for delta in range(0, 6):
+        d = target_date - timedelta(days=delta)
+        dstr = d.strftime('%d-%m-%Y')
+        if dstr in _XLS_VCP_CACHE:
+            return _XLS_VCP_CACHE[dstr]
+        try:
+            url = f'https://api.pub.cafci.org.ar/pb_get?fecha={dstr}'
+            r = req.get(url, timeout=20, headers=_PUB_H)
+            if r.status_code != 200:
+                continue
+            ct = r.headers.get('content-type', '')
+            if 'html' in ct or len(r.content) < 5000:
+                continue
+            fondos = _parse_xls(r.content)
+            if not fondos:
+                continue
+            vcps = {n: f['vcp'] for n, f in fondos.items() if f['vcp']}
+            _XLS_VCP_CACHE[dstr] = vcps
+            return vcps
+        except Exception:
+            continue
+    return {}
+
+_REND_CACHE = {}  # nombre -> {'data': {...}, 'ts': float}
+
+def _calc_rendimientos(nombre, vcp_hoy):
+    """Calcula rendimientos comparando VCP de hoy vs fechas historicas."""
+    import time
+    from datetime import date, timedelta
+    now = time.time()
+    cached = _REND_CACHE.get(nombre)
+    if cached and now - cached['ts'] < 4 * 3600:
+        return cached['data']
+    if not vcp_hoy:
+        return {'week': None, 'month': None, 'ytd': None, 'year': None}
+    today = date.today()
+    targets = {
+        'week':  today - timedelta(days=7),
+        'month': today - timedelta(days=30),
+        'ytd':   date(today.year, 1, 1),
+        'year':  today - timedelta(days=365),
+    }
+    result = {}
+    for period, target_date in targets.items():
+        vcps = _vcps_at(target_date)
+        base = vcps.get(nombre)
+        result[period] = round((vcp_hoy / base - 1) * 100, 4) if base else None
+    _REND_CACHE[nombre] = {'data': result, 'ts': now}
+    return result
 
 
 @app.route('/api/fci/search', methods=['GET'])
@@ -349,114 +342,108 @@ def api_fci_search():
     if not q or len(q) < 2:
         return jsonify({'ok': False, 'msg': 'q requerido (min 2 chars)'}), 400
     try:
-        fondos = _cafci_load_fondos()
-        results = [f for f in fondos.values() if q in f['nombre'].lower()][:40]
-        results.sort(key=lambda f: (0 if f['nombre'].lower().startswith(q) else 1, f['nombre']))
+        fondos = _load_today()
+        results = []
+        for nombre, f in fondos.items():
+            if q in nombre.lower():
+                results.append({
+                    'fondoId':    f['fondoId'],
+                    'claseId':    f['fondoId'],
+                    'nombre':     nombre,
+                    'gerente':    f['gerente'],
+                    'tipo':       f['tipo'],
+                    'moneda':     f['moneda'],
+                    'vcp':        f['vcp'],
+                    'patrimonio': f['patrimonio'],
+                    'rendimientos': {
+                        'day': f['rend_dia'],
+                        'week': None, 'month': None, 'ytd': None, 'year': None
+                    },
+                })
+        results = results[:40]
+        results.sort(key=lambda x: (0 if x['nombre'].lower().startswith(q) else 1, x['nombre']))
         return jsonify({'ok': True, 'data': results, 'total': len(fondos)})
     except Exception as e:
         return jsonify({'ok': False, 'msg': str(e)}), 500
 
 
-_REND_CACHE = {}
-
-def _calc_rendimientos(fid, cid):
-    import time
-    from datetime import date, timedelta
-    key = f"{fid};{cid}"
-    now = time.time()
-    cached = _REND_CACHE.get(key)
-    if cached and now - cached['ts'] < 4 * 3600:
-        return cached['data']
-    empty = {'week': None, 'month': None, 'ytd': None, 'year': None}
-    today = date.today()
-    desde = today - timedelta(days=366)
-    def dfmt(d): return d.strftime('%d-%m-%Y')
-    try:
-        url = f'https://api.pub.cafci.org.ar/fondo/{fid}/clase/{cid}/rendimiento/{dfmt(desde)}/{dfmt(today)}'
-        r = req.get(url, timeout=20, headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.cafci.org.ar/'})
-        if r.status_code != 200: return empty
-        text = r.text.strip()
-        if not text or text[0] not in ('{', '['): return empty
-        items = r.json().get('data', [])
-        if not items: return empty
-        series = []
-        for it in items:
-            if not isinstance(it, dict) or not it.get('fecha') or it.get('vcp') is None: continue
-            try:
-                parts = str(it['fecha']).split('-')
-                fd = date(int(parts[0]), int(parts[1]), int(parts[2])) if len(parts[0])==4 else date(int(parts[2]), int(parts[1]), int(parts[0]))
-                series.append((fd, float(it['vcp'])))
-            except: continue
-        if not series: return empty
-        series.sort(key=lambda x: x[0])
-        last = series[-1][1]
-        def rend(target):
-            cands = [v for d,v in series if d <= target]
-            if not cands: cands = [v for d,v in series if d >= target][:1]
-            return round((last / cands[-1] - 1) * 100, 4) if cands and cands[-1] else None
-        result = {
-            'week':  rend(today - timedelta(days=7)),
-            'month': rend(today - timedelta(days=30)),
-            'ytd':   rend(date(today.year, 1, 1)),
-            'year':  rend(today - timedelta(days=365)),
-        }
-        _REND_CACHE[key] = {'data': result, 'ts': now}
-        return result
-    except: return empty
-
-
 @app.route('/api/fci/ficha', methods=['GET'])
 def api_fci_ficha():
-    fid_s = request.args.get('fondo')
-    cid_s = request.args.get('clase')
-    if not fid_s or not cid_s:
-        return jsonify({'ok': False, 'msg': 'fondo y clase requeridos'}), 400
+    """
+    Devuelve datos + rendimientos completos para un fondo.
+    Parametros: ?nombre=<nombre exacto>  o  ?fondo=<fondoId>  y  ?clase=<claseId>
+    Los rendimientos historicos se calculan comparando VCPs entre fechas.
+    """
+    nombre_q = request.args.get('nombre', '').strip()
+    fid_s    = request.args.get('fondo', '').strip()
+    if not nombre_q and not fid_s:
+        return jsonify({'ok': False, 'msg': 'nombre o fondo requerido'}), 400
     try:
-        fid, cid = int(fid_s), int(cid_s)
-        fondos = _cafci_load_fondos()
-        key = f'{fid};{cid}'
-        f = fondos.get(key)
+        fondos = _load_today()
+        f = None
+        if nombre_q:
+            f = fondos.get(nombre_q)
+            if not f:
+                ql = nombre_q.lower()
+                for n, fd in fondos.items():
+                    if ql in n.lower():
+                        f = fd
+                        break
+        else:
+            fid = int(fid_s)
+            for fd in fondos.values():
+                if fd['fondoId'] == fid:
+                    f = fd
+                    break
         if not f:
-            # Buscar solo por fondoId si claseId no matchea
-            matches = [v for k, v in fondos.items() if v['fondoId'] == fid]
-            if matches:
-                f = matches[0]
-        if not f:
-            return jsonify({'ok': False, 'msg': f'Fondo {fid}/{cid} no encontrado'}), 404
-        f = dict(f)
-        hist = _calc_rendimientos(f['fondoId'], f['claseId'])
-        f['rendimientos'] = {**f['rendimientos'], **hist}
-        return jsonify({'ok': True, 'data': f})
+            return jsonify({'ok': False, 'msg': 'Fondo no encontrado'}), 404
+
+        hist = _calc_rendimientos(f['nombre'], f['vcp'])
+        return jsonify({'ok': True, 'data': {
+            'fondoId':    f['fondoId'],
+            'claseId':    f['fondoId'],
+            'nombre':     f['nombre'],
+            'gerente':    f['gerente'],
+            'tipo':       f['tipo'],
+            'moneda':     f['moneda'],
+            'vcp':        f['vcp'],
+            'patrimonio': f['patrimonio'],
+            'rendimientos': {'day': f['rend_dia'], **hist},
+        }})
     except Exception as e:
         return jsonify({'ok': False, 'msg': str(e)}), 500
 
 
 @app.route('/api/fci/historico', methods=['GET'])
 def api_fci_historico():
-    fid   = request.args.get('fondo')
-    cid   = request.args.get('clase')
-    from_d = request.args.get('desde')
-    to_d   = request.args.get('hasta')
-    if not all([fid, cid, from_d, to_d]):
-        return jsonify({'ok': False, 'msg': 'fondo clase desde hasta requeridos'}), 400
+    """
+    Serie historica de VCP para el grafico.
+    Descarga Excels de ~25 fechas entre desde y hasta.
+    Parametros: ?nombre=<nombre exacto>&desde=YYYY-MM-DD&hasta=YYYY-MM-DD
+    """
+    nombre_q = request.args.get('nombre', '').strip()
+    from_d   = request.args.get('desde', '').strip()
+    to_d     = request.args.get('hasta', '').strip()
+    if not nombre_q or not from_d or not to_d:
+        return jsonify({'ok': False, 'msg': 'nombre desde hasta requeridos'}), 400
     try:
-        def fmt(d):
-            y, m, day = d.split('-')
-            return f'{day}-{m}-{y}'
-        url = f'https://api.pub.cafci.org.ar/fondo/{fid}/clase/{cid}/rendimiento/{fmt(from_d)}/{fmt(to_d)}'
-        r = req.get(url, timeout=20,
-                    headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.cafci.org.ar/'})
-        if r.status_code != 200:
-            return jsonify({'ok': True, 'data': []})
-        text = r.text.strip()
-        if not text or text[0] not in ('{', '['):
-            return jsonify({'ok': True, 'data': []})
-        items = r.json().get('data', [])
-        series = [
-            {'fecha': it['fecha'], 'vcp': float(it['vcp'])}
-            for it in items
-            if isinstance(it, dict) and it.get('fecha') and it.get('vcp') is not None
-        ]
+        from datetime import date, timedelta
+        y0, m0, d0 = from_d.split('-')
+        y1, m1, d1 = to_d.split('-')
+        start = date(int(y0), int(m0), int(d0))
+        end   = date(int(y1), int(m1), int(d1))
+        delta = (end - start).days
+        step  = max(1, delta // 25)
+
+        series = []
+        d = start
+        while d <= end:
+            vcps = _vcps_at(d)
+            vcp = vcps.get(nombre_q)
+            if vcp:
+                series.append({'fecha': d.strftime('%Y-%m-%d'), 'vcp': vcp})
+            d += timedelta(days=step)
+
         return jsonify({'ok': True, 'data': series})
     except Exception as e:
         return jsonify({'ok': False, 'msg': str(e)}), 500
@@ -464,28 +451,34 @@ def api_fci_historico():
 
 @app.route('/api/fci/debug', methods=['GET'])
 def api_fci_debug():
-    """Muestra la estructura real del Excel y los primeros 3 fondos parseados."""
-    import io
-    import openpyxl
+    """Diagnostico: prueba si el endpoint acepta parametro ?fecha=."""
     try:
-        r = req.get('https://api.pub.cafci.org.ar/pb_get', timeout=25,
-                    headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.cafci.org.ar/'})
-        wb = openpyxl.load_workbook(io.BytesIO(r.content), read_only=True, data_only=True)
-        ws = wb.active
-        raw_rows = []
-        for i, row in enumerate(ws.iter_rows(values_only=True)):
-            raw_rows.append([str(c) if c is not None else None for c in row])
-            if i >= 5:
-                break
-        wb.close()
-        fondos = _cafci_load_fondos()
-        sample = list(fondos.values())[:5]
-        return jsonify({
-            'ok': True,
-            'total_fondos': len(fondos),
-            'first_6_raw_rows': raw_rows,
-            'sample_fondos': sample
-        })
+        from datetime import date, timedelta
+        results = {}
+        test_dates = [
+            ('sin_fecha',    'https://api.pub.cafci.org.ar/pb_get'),
+            ('fecha_semana', f'https://api.pub.cafci.org.ar/pb_get?fecha={(date.today()-timedelta(days=7)).strftime("%d-%m-%Y")}'),
+            ('fecha_mes',    f'https://api.pub.cafci.org.ar/pb_get?fecha={(date.today()-timedelta(days=30)).strftime("%d-%m-%Y")}'),
+        ]
+        for label, url in test_dates:
+            r = req.get(url, timeout=15, headers=_PUB_H)
+            info = {
+                'status': r.status_code,
+                'content_type': r.headers.get('content-type', ''),
+                'size_kb': round(len(r.content) / 1024, 1),
+            }
+            if r.status_code == 200 and len(r.content) > 5000 and 'html' not in r.headers.get('content-type',''):
+                try:
+                    fondos = _parse_xls(r.content)
+                    info['fondos_count'] = len(fondos)
+                    sample = list(fondos.items())[:2]
+                    info['sample'] = {n: f['vcp'] for n, f in sample}
+                except Exception as e:
+                    info['parse_error'] = str(e)
+            else:
+                info['response_preview'] = r.text[:200]
+            results[label] = info
+        return jsonify({'ok': True, 'results': results})
     except Exception as e:
         return jsonify({'ok': False, 'msg': str(e)}), 500
 
