@@ -260,10 +260,10 @@ def _find(fondos, query):
     contains = [f for k, f in fondos.items() if ql in k]
     return contains[0] if contains else None
 
-
+def _calc_rendimientos(nombre, vcp_hoy):
     """
-    Rendimiento diario: /ultimo vs /penultimo.
-    Rendimientos semana/mes/YTD/año: desde Google Sheets (acumulado con /tick).
+    Rendimiento diario: ArgentinaDatos /ultimo vs /penultimo.
+    Rendimientos semana/mes/YTD/año: desde Google Sheets.
     """
     from datetime import date, timedelta
 
@@ -280,7 +280,7 @@ def _find(fondos, query):
     except Exception:
         pass
 
-    # Históricos desde Google Sheets
+    # Historicos desde Google Sheets
     today_s = date.today().strftime('%Y-%m-%d')
     today_d = date.today()
 
@@ -539,6 +539,10 @@ def api_fci_ficha():
 
 @app.route('/api/fci/historico', methods=['GET'])
 def api_fci_historico():
+    """
+    Serie historica de VCP combinando Google Sheets + punto vivo de hoy.
+    """
+    from datetime import date
     nombre_q = request.args.get('nombre', '').strip()
     from_d   = request.args.get('desde', '').strip()
     to_d     = request.args.get('hasta', '').strip()
@@ -548,7 +552,18 @@ def api_fci_historico():
         fondos = _load_ad('ultimo')
         f = _find(fondos, nombre_q)
         nombre_real = f['nombre'] if f else nombre_q
+
+        # Historico desde Google Sheets
         series = _gs_read_series(nombre_real, from_d, to_d)
+
+        # Agregar punto de hoy desde ArgentinaDatos si el tick aun no corrio hoy
+        today = date.today().strftime('%Y-%m-%d')
+        if f and f.get('vcp') and today <= to_d:
+            fechas = {p['fecha'] for p in series}
+            if today not in fechas:
+                series.append({'fecha': today, 'vcp': f['vcp']})
+                series.sort(key=lambda x: x['fecha'])
+
         return jsonify({'ok': True, 'data': series})
     except Exception as e:
         return jsonify({'ok': False, 'msg': str(e)}), 500
