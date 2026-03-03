@@ -422,37 +422,30 @@ def api_fci_historico():
 
 @app.route('/api/fci/debug', methods=['GET'])
 @app.route('/api/fci/debug', methods=['GET'])
+@app.route('/api/fci/debug', methods=['GET'])
 def api_fci_debug():
-    """Prueba los endpoints de CriptoYa FCI para encontrar el historico."""
+    import re
+    h = {'User-Agent': 'Mozilla/5.0', 'Accept': '*/*', 'Referer': 'https://criptoya.com/fci'}
     results = {}
-    # CriptoYa usa IDs de CAFCI. Probamos distintos patrones de URL.
-    test_urls = {
-        'cy_fci_list':      'https://criptoya.com/api/ar/fci',
-        'cy_fci_fondo':     'https://criptoya.com/api/ar/fci/362/636',
-        'cy_fci_hist':      'https://criptoya.com/api/ar/fci/362/636/historico',
-        'cy_fci_vcp':       'https://criptoya.com/api/fci/362/636',
-        'cy_fci_vcp2':      'https://criptoya.com/api/fci/362;636',
-        'cy_fci_search':    'https://criptoya.com/api/fci?q=fima',
-        'cy_charts_fci':    'https://criptoya.com/api/charts/fci/362/636',
-        'cy_charts_fci2':   'https://criptoya.com/api/charts/FCI/362/636',
-    }
-    h = {'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json', 'Referer': 'https://criptoya.com/fci'}
-    for label, url in test_urls.items():
-        try:
-            r = req.get(url, timeout=8, headers=h)
-            t = r.text.strip()[:300]
-            results[label] = {'status': r.status_code, 'ct': r.headers.get('content-type','')[:50], 'preview': t}
-        except Exception as e:
-            results[label] = {'error': str(e)}
-    return jsonify({'ok': True, 'results': results})
-
-
     try:
-        from dashboard import fetch_treasury_yields
-        return jsonify(fetch_treasury_yields())
+        r = req.get('https://criptoya.com/fci', timeout=10, headers=h)
+        html = r.text
+        # Find script src tags
+        scripts = re.findall(r"src=[\"']([^\"']+_app[^\"']+)[\"']", html)
+        if not scripts:
+            scripts = re.findall(r"src=[\"']([^\"']+\.js[^\"']*)[\"']", html)
+        results['scripts'] = scripts[:10]
+        results['html_len'] = len(html)
+        # Try to fetch the first app bundle
+        if scripts:
+            url = scripts[0] if scripts[0].startswith('http') else 'https://criptoya.com' + scripts[0]
+            results['bundle_url'] = url
+            rjs = req.get(url, timeout=15, headers=h)
+            js = rjs.text
+            results['bundle_size'] = len(js)
+            # Search for FCI API patterns
+            hits = re.findall(r'["`][^"`]{0,20}fci[^"`]{0,80}["`]', js, re.IGNORECASE)
+            results['fci_hits'] = list(set(hits))[:25]
     except Exception as e:
-        return jsonify({'ok': False, 'msg': str(e)}), 500
-
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+        results['error'] = str(e)
+    return jsonify({'ok': True, 'results': results})
