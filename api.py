@@ -195,37 +195,71 @@ Sin texto extra, sin backticks."""
 
 # ── /api/fci/* ────────────────────────────────────────────
 
+from urllib.parse import quote as _url_quote
+
 def _safe_float(v):
-    try: return round(float(v), 4) if v not in (None,'','N/A') else None
+    try: return round(float(v), 4) if v not in (None, '', 'N/A') else None
     except: return None
 
 CAFCI_H = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    'Accept': 'application/json',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'application/json, text/plain, */*',
+    'Accept-Language': 'es-AR,es;q=0.9',
     'Origin': 'https://www.cafci.org.ar',
     'Referer': 'https://www.cafci.org.ar/',
 }
 
-@app.route('/api/fci/search', methods=['GET'])
+def _cafci_get(url, timeout=15):
+    """GET a CAFCI URL. Raises descriptive Exception if response is not valid JSON."""
+    r = req.get(url, timeout=timeout, headers=CAFCI_H)
+    if r.status_code != 200:
+        raise Exception('CAFCI HTTP ' + str(r.status_code) + ': ' + r.text[:200])
+    text = r.text.strip()
+    if not text or text[0] not in ('{', '['):
+        raise Exception('CAFCI no-JSON (HTTP ' + str(r.status_code) + '): ' + text[:200])
+    return r.json()
+
+
+@app.route("/api/fci/search", methods=["GET"])
 def api_fci_search():
-    q = request.args.get('q','').strip()
-    if not q: return jsonify({'ok':False,'msg':'q requerido'}), 400
+    q = request.args.get("q", "").strip()
+    if not q or len(q) < 2:
+        return jsonify({"ok": False, "msg": "q requerido (min 2 chars)"}), 400
     try:
-        r = req.get(f'https://api.cafci.org.ar/fondo?nombre={q}&limit=40&estado=1', timeout=10, headers=CAFCI_H)
+        j = _cafci_get("https://api.cafci.org.ar/fondo?nombre=" + _url_quote(q) + "&limit=40&estado=1")
         results = []
-        for f in r.json().get('data',[]):
-            gest = (f.get('gestora') or {})
-            tipo = (f.get('tipoFondo') or {})
-            for c in (f.get('clases') or []):
+        for f in (j.get("data") or []):
+            gest = f.get("gestora") or {}
+            tipo = f.get("tipoFondo") or {}
+            for c in (f.get("clases") or []):
                 results.append({
-                    'fondoId': f.get('id'), 'claseId': c.get('id'),
-                    'nombre': f.get('nombre',''), 'clase': c.get('nombre',''),
-                    'gerente': gest.get('nombre','') if isinstance(gest,dict) else '',
-                    'tipo': tipo.get('nombre','') if isinstance(tipo,dict) else '',
-                    'moneda': c.get('moneda',''),
+                    "fondoId": f.get("id"),
+                    "claseId": c.get("id"),
+                    "nombre":  f.get("nombre", ""),
+                    "clase":   c.get("nombre", ""),
+                    "gerente": gest.get("nombre", "") if isinstance(gest, dict) else "",
+                    "tipo":    tipo.get("nombre", "") if isinstance(tipo, dict) else "",
+                    "moneda":  c.get("moneda", ""),
                 })
-        return jsonify({'ok':True,'data':results})
-    except Exception as e: return jsonify({'ok':False,'msg':str(e)}), 500
+        return jsonify({"ok": True, "data": results})
+    except Exception as e:
+        return jsonify({"ok": False, "msg": str(e)}), 500
+
+@app.route('/api/fci/debug', methods=['GET'])
+def api_fci_debug():
+    out = {}
+    tests = [
+        ('search_balanz', 'https://api.cafci.org.ar/fondo?nombre=balanz&limit=3&estado=1'),
+        ('ficha_847_2409', 'https://api.cafci.org.ar/fondo/847/clase/2409/ficha'),
+    ]
+    for label, url in tests:
+        try:
+            r = req.get(url, timeout=10, headers=CAFCI_H)
+            out[label] = {'status': r.status_code, 'preview': r.text[:400]}
+        except Exception as e:
+            out[label] = {'error': str(e)}
+    return jsonify(out)
+
 
 @app.route('/api/fci/ficha', methods=['GET'])
 def api_fci_ficha():
