@@ -421,44 +421,32 @@ def api_fci_historico():
 
 
 @app.route('/api/fci/debug', methods=['GET'])
+@app.route('/api/fci/debug', methods=['GET'])
 def api_fci_debug():
-    """Muestra primeros fondos CON vcp != null de cada tipo, y prueba formato fecha historica."""
-    from datetime import date, timedelta
+    """Prueba los endpoints de CriptoYa FCI para encontrar el historico."""
     results = {}
-    base = 'https://api.argentinadatos.com/v1/finanzas/fci'
-    tipos = ['mercadoDinero', 'rentaFija', 'rentaVariable', 'rentaMixta']
-    for tipo in tipos:
+    # CriptoYa usa IDs de CAFCI. Probamos distintos patrones de URL.
+    test_urls = {
+        'cy_fci_list':      'https://criptoya.com/api/ar/fci',
+        'cy_fci_fondo':     'https://criptoya.com/api/ar/fci/362/636',
+        'cy_fci_hist':      'https://criptoya.com/api/ar/fci/362/636/historico',
+        'cy_fci_vcp':       'https://criptoya.com/api/fci/362/636',
+        'cy_fci_vcp2':      'https://criptoya.com/api/fci/362;636',
+        'cy_fci_search':    'https://criptoya.com/api/fci?q=fima',
+        'cy_charts_fci':    'https://criptoya.com/api/charts/fci/362/636',
+        'cy_charts_fci2':   'https://criptoya.com/api/charts/FCI/362/636',
+    }
+    h = {'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json', 'Referer': 'https://criptoya.com/fci'}
+    for label, url in test_urls.items():
         try:
-            r = req.get(f'{base}/{tipo}/ultimo', timeout=10, headers=_AD_H)
-            items = r.json() if r.status_code == 200 else []
-            if isinstance(items, list):
-                with_vcp = [it for it in items if it.get('vcp') is not None]
-                results[tipo] = {
-                    'total': len(items),
-                    'with_vcp': len(with_vcp),
-                    'sample_vcp': with_vcp[:3],
-                    'sample_raw': items[:2],
-                }
-            else:
-                results[tipo] = {'raw': items}
+            r = req.get(url, timeout=8, headers=h)
+            t = r.text.strip()[:300]
+            results[label] = {'status': r.status_code, 'ct': r.headers.get('content-type','')[:50], 'preview': t}
         except Exception as e:
-            results[tipo] = {'error': str(e)}
-    # Probar fecha historica en formato YYYY-MM-DD (como la doc indica date format)
-    d30 = (date.today() - timedelta(days=30)).strftime('%Y-%m-%d')
-    for label, url in [
-        ('hist_dash',  f'{base}/mercadoDinero/{d30}'),
-        ('hist_slash', f'{base}/mercadoDinero/{d30.replace("-","/")}'),
-    ]:
-        try:
-            r = req.get(url, timeout=10, headers=_AD_H)
-            items = r.json() if r.status_code == 200 else []
-            with_vcp = [it for it in items if isinstance(items, list) and it.get('vcp') is not None]
-            results[label] = {'url': url, 'status': r.status_code, 'total': len(items) if isinstance(items,list) else 0, 'with_vcp': len(with_vcp), 'sample': with_vcp[:2]}
-        except Exception as e:
-            results[label] = {'url': url, 'error': str(e)}
+            results[label] = {'error': str(e)}
     return jsonify({'ok': True, 'results': results})
 
-def api_treasury():
+
     try:
         from dashboard import fetch_treasury_yields
         return jsonify(fetch_treasury_yields())
