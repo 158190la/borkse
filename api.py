@@ -356,20 +356,15 @@ def _gs_get_ws():
         ws = sh.worksheet(_GS_WS_NAME)
     except Exception:
         # Crear con suficientes filas/cols: 5000 dias x 4000 fondos
-        ws = sh.add_worksheet(_GS_WS_NAME, rows=5000, cols=4000)
+        ws = sh.add_worksheet(_GS_WS_NAME, rows=2500, cols=3500)
     return ws
 
 def _gs_write_snapshot():
     """
-    Estructura pivot: fila 1 = header [fecha, fondo1, fondo2, ...]
-                      fila 2+ = [YYYY-MM-DD, vcp1, vcp2, ...]
-
-    Logica:
-    1. Lee el header actual (fila 1)
-    2. Si no existe, lo crea con todos los fondos de hoy
-    3. Si hay fondos nuevos, los agrega al final del header
-    4. Construye la fila de hoy y la appendea
-    5. Si ya existe la fecha de hoy, no hace nada
+    Escribe una nueva fila con los VCPs de hoy en el Sheet pivot.
+    Fila 1 = header: [fecha, Fondo1, Fondo2, ...]
+    Fila 2+ = datos: [YYYY-MM-DD, vcp1, vcp2, ...]
+    Nunca sobreescribe filas existentes.
     """
     from datetime import date
     today = date.today().strftime('%Y-%m-%d')
@@ -378,52 +373,55 @@ def _gs_write_snapshot():
     if not fondos:
         return 0, 'No se pudo cargar fondos de ArgentinaDatos'
 
-    ws = _gs_get_ws()
-
-    # Leer header y fechas existentes de una sola vez (mas eficiente)
-    # Lee solo las primeras 2 columnas para chequear fechas, y fila 1 para header
-    try:
-        header_row = ws.row_values(1)
-    except Exception:
-        header_row = []
-
-    # Verificar si ya existe snapshot de hoy
-    if header_row:
-        try:
-            fecha_col = ws.col_values(1)
-            if today in fecha_col:
-                return 0, f'Ya existe snapshot para {today}'
-        except Exception:
-            pass
-
-    # Construir lista ordenada de nombres de fondos actuales
     nombres_hoy = {f['nombre']: f['vcp'] for f in fondos.values() if f.get('vcp') is not None}
 
+    ws = _gs_get_ws()
+
+    # Leer TODO el sheet de una sola vez para evitar multiples requests
+    all_values = ws.get_all_values()
+
+    # Extraer header (fila 1) — filtrar celdas vacias del final
+    if all_values and any(c.strip() for c in all_values[0]):
+        header_row = all_values[0]
+        # Strip trailing empty cells
+        while header_row and header_row[-1] == '':
+            header_row = header_row[:-1]
+    else:
+        header_row = []
+
+    # Chequear si ya existe la fecha de hoy en alguna fila de datos
+    for row in all_values[1:]:
+        if row and row[0] == today:
+            return 0, f'Ya existe snapshot para {today}'
+
     if not header_row:
-        # Primera vez: crear header
-        header = ['fecha'] + sorted(nombres_hoy.keys())
-        ws.update('A1', [header])
-        header_row = header
+        # Primera vez: escribir header en fila 1
+        header_row = ['fecha'] + sorted(nombres_hoy.keys())
+        ws.update('A1', [header_row])
+    else:
+        # Detectar fondos nuevos y agregarlos al final del header
+        fondos_en_header = set(header_row[1:])
+        fondos_nuevos = [n for n in sorted(nombres_hoy.keys()) if n not in fondos_en_header]
+        if fondos_nuevos:
+            new_header = header_row + fondos_nuevos
+            # Solo actualizar las celdas nuevas del header, no reescribir todo
+            col_start = len(header_row) + 1  # 1-indexed
+            import gspread.utils as gu
+            col_letter = gu.rowcol_to_a1(1, col_start).rstrip('1')
+            ws.update(f'{col_letter}1', [fondos_nuevos])
+            header_row = new_header
 
-    # Detectar fondos nuevos que no estan en el header
-    fondos_en_header = set(header_row[1:])
-    fondos_nuevos = [n for n in sorted(nombres_hoy.keys()) if n not in fondos_en_header]
-    if fondos_nuevos:
-        # Extender el header con los fondos nuevos
-        new_header = header_row + fondos_nuevos
-        ws.update('A1', [new_header])
-        header_row = new_header
+    # Construir fila de hoy alineada con el header
+    fila = [today] + [
+        nombres_hoy.get(nombre, '') for nombre in header_row[1:]
+    ]
 
-    # Construir fila de hoy: [fecha, vcp_col1, vcp_col2, ...]
-    fila = [today] + [nombres_hoy.get(nombre, '') for nombre in header_row[1:]]
+    # Append como nueva fila al final
+    ws.append_row(fila, value_input_option='RAW', insert_data_option='INSERT_ROWS')
 
-    # Append
-    ws.append_row(fila, value_input_option='RAW')
-
-    # Invalidar cache de datos
     _GS_DATA_CACHE.clear()
-
     return len(nombres_hoy), 'ok'
+
 
 def _gs_read_series(nombre, desde, hasta):
     """
