@@ -421,31 +421,36 @@ def api_fci_historico():
 
 
 @app.route('/api/fci/debug', methods=['GET'])
-@app.route('/api/fci/debug', methods=['GET'])
-@app.route('/api/fci/debug', methods=['GET'])
 def api_fci_debug():
-    import re
-    h = {'User-Agent': 'Mozilla/5.0', 'Accept': '*/*', 'Referer': 'https://criptoya.com/fci'}
+    h = {'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json'}
+    h2 = {**h, 'Origin': 'https://www.cafci.org.ar', 'Referer': 'https://www.cafci.org.ar/'}
     results = {}
-    try:
-        r = req.get('https://criptoya.com/fci', timeout=10, headers=h)
-        html = r.text
-        # Find script src tags
-        scripts = re.findall(r"src=[\"']([^\"']+_app[^\"']+)[\"']", html)
-        if not scripts:
-            scripts = re.findall(r"src=[\"']([^\"']+\.js[^\"']*)[\"']", html)
-        results['scripts'] = scripts[:10]
-        results['html_len'] = len(html)
-        # Try to fetch the first app bundle
-        if scripts:
-            url = scripts[0] if scripts[0].startswith('http') else 'https://criptoya.com' + scripts[0]
-            results['bundle_url'] = url
-            rjs = req.get(url, timeout=15, headers=h)
-            js = rjs.text
-            results['bundle_size'] = len(js)
-            # Search for FCI API patterns
-            hits = re.findall(r'["`][^"`]{0,20}fci[^"`]{0,80}["`]', js, re.IGNORECASE)
-            results['fci_hits'] = list(set(hits))[:25]
-    except Exception as e:
-        results['error'] = str(e)
+    tests = {
+        'cafci_rend':      'https://api.cafci.org.ar/fondo/847/clase/2409/rendimiento/2025-01-01/2025-02-01',
+        'cafci_rend_orig': 'https://api.cafci.org.ar/fondo/847/clase/2409/rendimiento/2025-01-01/2025-02-01',
+        'pub_rend':        'https://api.pub.cafci.org.ar/fondo/847/clase/2409/rendimiento/2025-01-01/2025-02-01',
+        'pub_clase':       'https://api.pub.cafci.org.ar/fondo/847/clase/2409',
+        'pub_cuotaparte':  'https://api.pub.cafci.org.ar/fondo/847/clase/2409/cuotaparte',
+    }
+    for label, url in tests.items():
+        hdrs = h2 if 'orig' in label else h
+        try:
+            r = req.get(url, timeout=8, headers=hdrs)
+            results[label] = {'status': r.status_code, 'preview': r.text[:400]}
+        except Exception as e:
+            results[label] = {'error': str(e)}
     return jsonify({'ok': True, 'results': results})
+
+
+@app.route('/api/treasury', methods=['GET'])
+def api_treasury():
+    try:
+        from dashboard import fetch_treasury_yields
+        return jsonify(fetch_treasury_yields())
+    except Exception as e:
+        return jsonify({'ok': False, 'msg': str(e)}), 500
+
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
