@@ -13,12 +13,18 @@ SHEET_NAME       = "Hoja 13"
 OUTPUT_HTML      = "dashboard.html"
 
 def fetch_treasury_yields():
-    """Descarga yields del tesoro desde el FRED (Federal Reserve)."""
-    # Maturities y sus series FRED
+    """
+    Descarga yields del Tesoro desde FRED (Federal Reserve Bank of St. Louis).
+    Todas las series son en AÑOS. DGS3MO (3 meses) fue removida para evitar
+    confusión en la interpolación de la curva por plazo.
+    Si alguna serie falla, se registra el error explícitamente.
+    El fallback sólo se usa si TODAS las series fallan; nunca mezcla datos reales
+    con datos inventados.
+    """
+    # Clave = plazo en años, valor = serie FRED (todas en años)
     series = {
         1:  "DGS1",
         2:  "DGS2",
-        3:  "DGS3MO",  # 3 meses como proxy corto
         5:  "DGS5",
         7:  "DGS7",
         10: "DGS10",
@@ -26,26 +32,48 @@ def fetch_treasury_yields():
         30: "DGS30",
     }
     yields = {}
+    dates  = {}
+    errors = []
+
     for years, sid in series.items():
         try:
-            url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={sid}&vintage_date=9999-12-31"
-            with urllib.request.urlopen(url, timeout=8) as r:
+            # URL estándar FRED — devuelve toda la serie hasta hoy
+            url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={sid}"
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=10) as r:
                 lines = r.read().decode().strip().split("\n")
-                # Buscar el último valor no vacío
-                for line in reversed(lines[1:]):
-                    parts = line.split(",")
-                    if len(parts) == 2 and parts[1] not in (".", ""):
-                        yields[years] = float(parts[1])
-                        break
-        except:
-            pass
+            # Buscar el último valor no vacío ni "." (días festivos FRED usa ".")
+            found = False
+            for line in reversed(lines[1:]):
+                parts = line.split(",")
+                if len(parts) == 2 and parts[1] not in (".", "", "NA"):
+                    yields[years] = float(parts[1])
+                    dates[years]  = parts[0]
+                    found = True
+                    break
+            if not found:
+                errors.append(f"  WARNING: {sid} ({years}a) — ningún valor válido en la serie")
+        except Exception as e:
+            errors.append(f"  ERROR: {sid} ({years}a) — {e}")
 
-    if len(yields) < 4:
-        # Fallback si no hay internet
-        print("  (usando yields de fallback)")
-        yields = {1:3.56,2:3.533,3:3.533,5:3.665,7:3.862,10:4.085,20:4.669,30:4.720}
+    # Reportar errores individuales
+    for err in errors:
+        print(err)
+
+    if yields:
+        print(f"  Treasuries descargados ({len(yields)}/{len(series)}):")
+        for y in sorted(yields.keys()):
+            print(f"    {y:>2}a  {yields[y]:.3f}%  (fecha FRED: {dates[y]})")
+        if len(yields) < len(series):
+            missing = sorted(set(series.keys()) - set(yields.keys()))
+            print(f"  WARNING: series faltantes en plazos {missing} — la interpolación será menos precisa")
     else:
-        print(f"  Treasuries descargados: {sorted(yields.keys())}")
+        # Solo usar fallback si NINGUNA serie pudo descargarse
+        print("  WARNING: no se pudo descargar ninguna yield de FRED.")
+        print("  FALLBACK ACTIVADO — estos valores son estimados y pueden estar desactualizados:")
+        yields = {1: 4.95, 2: 4.80, 5: 4.55, 7: 4.50, 10: 4.45, 20: 4.70, 30: 4.65}
+        for y, v in sorted(yields.items()):
+            print(f"    {y:>2}a  {v:.3f}%  *** FALLBACK ***")
 
     return yields
 
