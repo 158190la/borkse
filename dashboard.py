@@ -43,7 +43,7 @@ def fetch_treasury_yields():
     if len(yields) < 4:
         # Fallback si no hay internet
         print("  (usando yields de fallback)")
-        yields = {1:5.15,2:4.90,3:4.75,5:4.60,7:4.55,10:4.50,20:4.70,30:4.65}
+        yields = {1:3.56,2:3.533,3:3.533,5:3.665,7:3.862,10:4.085,20:4.669,30:4.720}
     else:
         print(f"  Treasuries descargados: {sorted(yields.keys())}")
 
