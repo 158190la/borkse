@@ -71,7 +71,7 @@ def fetch_treasury_yields():
         # Solo usar fallback si NINGUNA serie pudo descargarse
         print("  WARNING: no se pudo descargar ninguna yield de FRED.")
         print("  FALLBACK ACTIVADO — estos valores son estimados y pueden estar desactualizados:")
-        yields = {1: 3.560, 2: 3.541, 5: 30667, 7: 3.3.861, 10: 4.081, 20: 4.661, 30: 4.715}
+        yields = {1: 3.56, 2: 3.54, 5: 3.06, 7: 3.61, 10: 4.08, 20: 4.66, 30: 4.71}
         for y, v in sorted(yields.items()):
             print(f"    {y:>2}a  {v:.3f}%  *** FALLBACK ***")
 
