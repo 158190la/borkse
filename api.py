@@ -77,7 +77,14 @@ def api_bonds():
         if not ensure_credentials():
             return jsonify({'ok': False, 'msg': 'No se encontro GOOGLE_CREDENTIALS.'}), 500
         from dashboard import load_bonds, process_bonds, fetch_treasury_yields
-        tsy = fetch_treasury_yields()
+        try:
+            tsy = fetch_treasury_yields()
+        except RuntimeError as e:
+            return jsonify({
+                'ok': False,
+                'msg': f'No se pudieron obtener yields reales del Tesoro: {e}. '
+                       'Configurar FMP_API_KEY en las variables de entorno de Railway.'
+            }), 503
         raw = load_bonds()
         bonds = process_bonds(raw, tsy)
         return jsonify(bonds)
@@ -605,7 +612,9 @@ def api_fci_debug():
 def api_treasury():
     try:
         from dashboard import fetch_treasury_yields
-        return jsonify(fetch_treasury_yields())
+        return jsonify({'ok': True, 'data': fetch_treasury_yields()})
+    except RuntimeError as e:
+        return jsonify({'ok': False, 'msg': str(e)}), 503
     except Exception as e:
         return jsonify({'ok': False, 'msg': str(e)}), 500
 
