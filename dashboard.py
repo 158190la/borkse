@@ -14,14 +14,107 @@ OUTPUT_HTML      = "dashboard.html"
 
 def fetch_treasury_yields():
     """
-    Descarga yields del Tesoro desde FRED (Federal Reserve Bank of St. Louis).
-    Todas las series son en AÑOS. DGS3MO (3 meses) fue removida para evitar
-    confusión en la interpolación de la curva por plazo.
-    Si alguna serie falla, se registra el error explícitamente.
-    El fallback sólo se usa si TODAS las series fallan; nunca mezcla datos reales
-    con datos inventados.
+    Descarga yields del Tesoro en tiempo real.
+    Fuente primaria: FMP (financialmodelingprep.com) — requiere FMP_API_KEY en env.
+    Fuente secundaria: FRED (Federal Reserve Bank of St. Louis) — sin API key.
+    Si ambas fallan, lanza RuntimeError — nunca devuelve valores hardcodeados.
+
+    Retorna dict {años: yield%}, ej: {1: 4.32, 2: 4.18, 5: 4.05, ...}
     """
-    # Clave = plazo en años, valor = serie FRED (todas en años)
+    import os
+
+    # ── FUENTE 1: FMP ────────────────────────────────────────────────────────
+    fmp_key = os.environ.get("FMP_API_KEY", "")
+    if fmp_key:
+        try:
+            yields = _fetch_treasury_fmp(fmp_key)
+            if yields:
+                print(f"  Treasuries FMP ({len(yields)} plazos):")
+                for y in sorted(yields.keys()):
+                    print(f"    {y:>2}a  {yields[y]:.3f}%")
+                return yields
+            print("  WARNING: FMP no devolvió datos de treasuries.")
+        except Exception as e:
+            print(f"  WARNING: FMP falló — {e}")
+    else:
+        print("  INFO: FMP_API_KEY no configurada, usando FRED.")
+
+    # ── FUENTE 2: FRED ───────────────────────────────────────────────────────
+    try:
+        yields = _fetch_treasury_fred()
+        if yields:
+            print(f"  Treasuries FRED ({len(yields)} plazos):")
+            for y in sorted(yields.keys()):
+                print(f"    {y:>2}a  {yields[y]:.3f}%")
+            return yields
+        print("  WARNING: FRED no devolvió datos válidos.")
+    except Exception as e:
+        print(f"  WARNING: FRED falló — {e}")
+
+    # ── SIN FALLBACK ─────────────────────────────────────────────────────────
+    raise RuntimeError(
+        "No se pudieron obtener yields reales del Tesoro (FMP y FRED fallaron). "
+        "Verificar FMP_API_KEY y conectividad de red."
+    )
+
+
+def _fetch_treasury_fmp(api_key):
+    """
+    Usa FMP /v4/treasury para obtener la curva del día más reciente.
+    Endpoint: https://financialmodelingprep.com/api/v4/treasury?apikey=...
+    Respuesta: [{date, month1, month2, month3, month6, year1, year2, year3,
+                 year5, year7, year10, year20, year30}, ...]
+    """
+    url = f"https://financialmodelingprep.com/api/v4/treasury?apikey={api_key}"
+    req_obj = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req_obj, timeout=15) as r:
+        data = json.loads(r.read().decode())
+
+    if not data or not isinstance(data, list):
+        return {}
+
+    # Tomar el registro más reciente (primer elemento, ya viene ordenado desc)
+    latest = None
+    for record in data:
+        # Buscar el primer registro con al menos un valor no nulo
+        if any(v for k, v in record.items() if k != "date" and v):
+            latest = record
+            break
+
+    if not latest:
+        return {}
+
+    print(f"  FMP treasury date: {latest.get('date', '?')}")
+
+    # Mapeo campo FMP -> plazo en años
+    mapping = {
+        "year1":  1,
+        "year2":  2,
+        "year3":  3,
+        "year5":  5,
+        "year7":  7,
+        "year10": 10,
+        "year20": 20,
+        "year30": 30,
+    }
+
+    yields = {}
+    for field, years in mapping.items():
+        val = latest.get(field)
+        if val is not None and val != "" and val != 0:
+            try:
+                yields[years] = round(float(val), 4)
+            except (ValueError, TypeError):
+                pass
+
+    return yields
+
+
+def _fetch_treasury_fred():
+    """
+    Descarga yields desde FRED. Fallback sin API key.
+    Solo devuelve datos si obtiene al menos 4 plazos válidos.
+    """
     series = {
         1:  "DGS1",
         2:  "DGS2",
@@ -32,48 +125,28 @@ def fetch_treasury_yields():
         30: "DGS30",
     }
     yields = {}
-    dates  = {}
     errors = []
 
     for years, sid in series.items():
         try:
-            # URL estándar FRED — devuelve toda la serie hasta hoy
             url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={sid}"
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=10) as r:
+            req_obj = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req_obj, timeout=10) as r:
                 lines = r.read().decode().strip().split("\n")
-            # Buscar el último valor no vacío ni "." (días festivos FRED usa ".")
-            found = False
             for line in reversed(lines[1:]):
                 parts = line.split(",")
                 if len(parts) == 2 and parts[1] not in (".", "", "NA"):
                     yields[years] = float(parts[1])
-                    dates[years]  = parts[0]
-                    found = True
                     break
-            if not found:
-                errors.append(f"  WARNING: {sid} ({years}a) — ningún valor válido en la serie")
         except Exception as e:
-            errors.append(f"  ERROR: {sid} ({years}a) — {e}")
+            errors.append(f"{sid}: {e}")
 
-    # Reportar errores individuales
     for err in errors:
-        print(err)
+        print(f"  FRED WARNING: {err}")
 
-    if yields:
-        print(f"  Treasuries descargados ({len(yields)}/{len(series)}):")
-        for y in sorted(yields.keys()):
-            print(f"    {y:>2}a  {yields[y]:.3f}%  (fecha FRED: {dates[y]})")
-        if len(yields) < len(series):
-            missing = sorted(set(series.keys()) - set(yields.keys()))
-            print(f"  WARNING: series faltantes en plazos {missing} — la interpolación será menos precisa")
-    else:
-        # Solo usar fallback si NINGUNA serie pudo descargarse
-        print("  WARNING: no se pudo descargar ninguna yield de FRED.")
-        print("  FALLBACK ACTIVADO — estos valores son estimados y pueden estar desactualizados:")
-        yields = {1: 3.56, 2: 3.54, 5: 3.06, 7: 3.61, 10: 4.08, 20: 4.66, 30: 4.71}
-        for y, v in sorted(yields.items()):
-            print(f"    {y:>2}a  {v:.3f}%  *** FALLBACK ***")
+    # Si obtuvimos menos de 4 plazos, no es suficiente para interpolar bien
+    if len(yields) < 4:
+        raise RuntimeError(f"FRED solo devolvió {len(yields)} plazos válidos (mínimo 4 requeridos).")
 
     return yields
 
