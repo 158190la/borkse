@@ -77,14 +77,7 @@ def api_bonds():
         if not ensure_credentials():
             return jsonify({'ok': False, 'msg': 'No se encontro GOOGLE_CREDENTIALS.'}), 500
         from dashboard import load_bonds, process_bonds, fetch_treasury_yields
-        try:
-            tsy = fetch_treasury_yields()
-        except RuntimeError as e:
-            return jsonify({
-                'ok': False,
-                'msg': f'No se pudieron obtener yields reales del Tesoro: {e}. '
-                       'Configurar FMP_API_KEY en las variables de entorno de Railway.'
-            }), 503
+        tsy = fetch_treasury_yields()
         raw = load_bonds()
         bonds = process_bonds(raw, tsy)
         return jsonify(bonds)
@@ -462,6 +455,7 @@ def _gs_read_series(nombre, desde, hasta):
 
     col_idx = header.index(nombre)
 
+    seen_fechas = set()
     series = []
     for row in rows:
         if len(row) <= col_idx:
@@ -469,11 +463,25 @@ def _gs_read_series(nombre, desde, hasta):
         fecha = row[0]
         if not (desde <= fecha <= hasta):
             continue
+        # Deduplicar: filas repetidas por finde/feriado, quedarse con la primera
+        if fecha in seen_fechas:
+            continue
         val = row[col_idx]
         if val == '':
             continue
         try:
-            series.append({'fecha': fecha, 'vcp': float(val)})
+            # Normalizar separador decimal: Sheets puede guardar "208749,292" (coma) o "208749.292" (punto)
+            s = str(val).strip()
+            if ',' in s and '.' not in s:
+                # Solo comas: la coma ES el separador decimal (ej: "208749,292")
+                s = s.replace(',', '.')
+            elif ',' in s and '.' in s:
+                # Ambos: el punto es miles y la coma es decimal (formato europeo, ej: "1.208.749,29")
+                s = s.replace('.', '').replace(',', '.')
+            # Si solo tiene punto o ninguno: float() lo maneja directamente
+            vcp = float(s)
+            series.append({'fecha': fecha, 'vcp': vcp})
+            seen_fechas.add(fecha)
         except Exception:
             continue
 
@@ -612,9 +620,7 @@ def api_fci_debug():
 def api_treasury():
     try:
         from dashboard import fetch_treasury_yields
-        return jsonify({'ok': True, 'data': fetch_treasury_yields()})
-    except RuntimeError as e:
-        return jsonify({'ok': False, 'msg': str(e)}), 503
+        return jsonify(fetch_treasury_yields())
     except Exception as e:
         return jsonify({'ok': False, 'msg': str(e)}), 500
 
