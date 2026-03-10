@@ -14,7 +14,7 @@ OUTPUT_HTML      = "dashboard.html"
 
 def fetch_treasury_yields():
     """
-    Descarga yields del Tesoro en tiempo real.
+    Descarga yields del cTesoro en tiempo real.
     Fuente primaria: FMP (financialmodelingprep.com) — requiere FMP_API_KEY en env.
     Fuente secundaria: FRED (Federal Reserve Bank of St. Louis) — sin API key.
     Si ambas fallan, lanza RuntimeError — nunca devuelve valores hardcodeados.
