@@ -77,7 +77,14 @@ def api_bonds():
         if not ensure_credentials():
             return jsonify({'ok': False, 'msg': 'No se encontro GOOGLE_CREDENTIALS.'}), 500
         from dashboard import load_bonds, process_bonds, fetch_treasury_yields
-        tsy = fetch_treasury_yields()
+        try:
+            tsy = fetch_treasury_yields()
+        except RuntimeError as e:
+            return jsonify({
+                'ok': False,
+                'msg': f'No se pudieron obtener yields reales del Tesoro: {e}. '
+                       'Configurar FMP_API_KEY en Railway.'
+            }), 503
         raw = load_bonds()
         bonds = process_bonds(raw, tsy)
         return jsonify(bonds)
@@ -268,6 +275,7 @@ def _calc_rendimientos(nombre, vcp_hoy):
     from datetime import date, timedelta
 
     if not vcp_hoy:
+        print(f'[rendimientos] "{nombre}" vcp_hoy es None/0 — no se puede calcular')
         return {'day': None, 'week': None, 'month': None, 'ytd': None, 'year': None}
 
     # Diario desde penultimo
@@ -277,8 +285,11 @@ def _calc_rendimientos(nombre, vcp_hoy):
         fp = _find(penult, nombre)
         if fp and fp.get('vcp'):
             rend_day = round((vcp_hoy / fp['vcp'] - 1) * 100, 4)
-    except Exception:
-        pass
+            print(f'[rendimientos] "{nombre}" day={rend_day}% (hoy={vcp_hoy} / ayer={fp["vcp"]})')
+        else:
+            print(f'[rendimientos] "{nombre}" no encontrado en penultimo — day=None')
+    except Exception as e:
+        print(f'[rendimientos] "{nombre}" error calculando day: {e}')
 
     # Historicos desde Google Sheets
     today_s = date.today().strftime('%Y-%m-%d')
@@ -423,6 +434,26 @@ def _gs_write_snapshot():
     return len(nombres_hoy), 'ok'
 
 
+def _parse_vcp(val):
+    """
+    Convierte string de VCP a float manejando separadores europeos/argentinos.
+    '208749,292'  -> 208749.292  (coma como decimal)
+    '1.208.749,29' -> 1208749.29  (punto miles, coma decimal)
+    '208749.292'  -> 208749.292  (punto como decimal, pasa directo)
+    """
+    s = str(val).strip()
+    if not s:
+        return None
+    if ',' in s and '.' not in s:
+        # Solo comas: la coma ES el separador decimal
+        s = s.replace(',', '.')
+    elif ',' in s and '.' in s:
+        # Ambos: punto = miles, coma = decimal (formato europeo)
+        s = s.replace('.', '').replace(',', '.')
+    # Si solo tiene punto o ninguno: float() lo maneja directo
+    return float(s)
+
+
 def _gs_read_series(nombre, desde, hasta):
     """
     Lee serie historica [{fecha, vcp}] para un fondo desde el Sheet pivot.
@@ -445,31 +476,55 @@ def _gs_read_series(nombre, desde, hasta):
                     'ts':     now,
                 })
         except Exception as e:
+            print(f'[_gs_read_series] ERROR cargando sheet: {e}')
             return []
 
     header = _GS_DATA_CACHE.get('header', [])
     rows   = _GS_DATA_CACHE.get('rows', [])
 
-    if not header or nombre not in header:
+    if not header:
+        print(f'[_gs_read_series] Header vacio — sheet sin datos')
         return []
 
-    col_idx = header.index(nombre)
+    # Buscar columna tolerando espacios extra y case
+    col_idx = None
+    nombre_norm = nombre.strip().lower()
+    for i, h in enumerate(header):
+        if h.strip().lower() == nombre_norm:
+            col_idx = i
+            break
 
+    if col_idx is None:
+        # Log para debug: mostrar primeros headers disponibles
+        sample = [h for h in header[:10] if h]
+        print(f'[_gs_read_series] "{nombre}" no encontrado en header. Muestra: {sample}')
+        return []
+
+    seen_fechas = set()
     series = []
+    parse_errors = 0
     for row in rows:
         if len(row) <= col_idx:
             continue
-        fecha = row[0]
-        if not (desde <= fecha <= hasta):
+        fecha = row[0].strip()
+        if not fecha or not (desde <= fecha <= hasta):
             continue
+        if fecha in seen_fechas:
+            continue  # deduplicar fines de semana/feriados
         val = row[col_idx]
         if val == '':
             continue
         try:
-            series.append({'fecha': fecha, 'vcp': float(val)})
+            vcp = _parse_vcp(val)
+            if vcp is None:
+                continue
+            series.append({'fecha': fecha, 'vcp': vcp})
+            seen_fechas.add(fecha)
         except Exception:
+            parse_errors += 1
             continue
 
+    print(f'[_gs_read_series] "{nombre}" | {desde}→{hasta} | {len(series)} puntos | {parse_errors} errores de parse')
     return series
 
 
@@ -580,12 +635,23 @@ def api_fci_debug():
             fp = _find(fondos_p, sample[0]['nombre'])
             if fp and fp.get('vcp') and sample[0].get('vcp'):
                 rend_test = round((sample[0]['vcp'] / fp['vcp'] - 1) * 100, 4)
-        # Test sheets connection
+        # Test sheets connection + leer header real
         gs_status = 'not tested'
+        sheet_headers = []
+        sheet_fechas  = []
         try:
-            ws = _gs_get_ws()
-            n_rows = len(ws.col_values(1))
-            gs_status = f'ok - {n_rows} filas en sheet'
+            ws     = _gs_get_ws()
+            all_v  = ws.get_all_values()
+            n_rows = len(all_v)
+            gs_status     = f'ok - {n_rows} filas en sheet'
+            sheet_headers = all_v[0] if all_v else []
+            # Primeras y últimas fechas de datos
+            fechas = [r[0] for r in all_v[1:] if r and r[0].strip()]
+            sheet_fechas = {
+                'primera': fechas[0]  if fechas else None,
+                'ultima':  fechas[-1] if fechas else None,
+                'total':   len(fechas),
+            }
         except Exception as e:
             gs_status = f'error: {e}'
         return jsonify({
@@ -594,8 +660,79 @@ def api_fci_debug():
             'fondos_penultimo': len(fondos_p),
             'rend_diario_test': rend_test,
             'google_sheets':    gs_status,
+            'sheet_fechas':     sheet_fechas,
+            'sheet_headers_total': len(sheet_headers),
+            'sheet_headers_muestra': sheet_headers[1:11],  # primeros 10 fondos (sin col fecha)
             'sample': [{'nombre': f['nombre'], 'vcp': f['vcp'], 'fecha': f['fecha']} for f in sample],
             'tip': 'Llamar POST /api/fci/tick una vez por dia para acumular historico en Google Sheets',
+        })
+    except Exception as e:
+        return jsonify({'ok': False, 'msg': str(e)}), 500
+
+
+@app.route('/api/fci/debug/nombre', methods=['GET'])
+def api_fci_debug_nombre():
+    """
+    Diagnostica por qué un nombre no matchea en el sheet.
+    GET /api/fci/debug/nombre?q=Fima%20Ahorro%20Plus%20-%20Clase%20C
+    """
+    q = request.args.get('q', '').strip()
+    if not q:
+        return jsonify({'ok': False, 'msg': 'Pasar ?q=nombre'}), 400
+    try:
+        # Invalidar cache para leer fresco
+        _GS_DATA_CACHE.clear()
+        ws       = _gs_get_ws()
+        all_data = ws.get_all_values()
+        if not all_data:
+            return jsonify({'ok': False, 'msg': 'Sheet vacío'}), 404
+
+        header = all_data[0]
+        rows   = all_data[1:]
+
+        # Búsqueda exacta
+        exacto = q in header
+
+        # Búsqueda normalizada
+        q_norm = q.strip().lower()
+        matches_norm = [h for h in header if h.strip().lower() == q_norm]
+
+        # Búsqueda parcial
+        matches_partial = [h for h in header if q_norm in h.strip().lower()]
+
+        # Si hay match, contar puntos reales para el mes actual
+        puntos = 0
+        col_idx = None
+        nombre_real = None
+        if matches_norm:
+            nombre_real = matches_norm[0]
+            col_idx = next(i for i, h in enumerate(header) if h.strip().lower() == q_norm)
+        elif exacto:
+            col_idx = header.index(q)
+            nombre_real = q
+
+        if col_idx is not None:
+            for row in rows:
+                if len(row) > col_idx and row[col_idx].strip():
+                    puntos += 1
+            # Mostrar primeras 3 filas con valor
+            muestra = []
+            for row in rows:
+                if len(row) > col_idx and row[col_idx].strip():
+                    muestra.append({'fecha': row[0], 'vcp_raw': row[col_idx]})
+                if len(muestra) >= 3:
+                    break
+
+        return jsonify({
+            'ok': True,
+            'buscado': q,
+            'match_exacto': exacto,
+            'match_normalizado': matches_norm,
+            'match_parcial': matches_partial[:5],
+            'nombre_real_en_sheet': nombre_real,
+            'col_idx': col_idx,
+            'puntos_con_valor': puntos,
+            'muestra_valores': muestra if col_idx is not None else [],
         })
     except Exception as e:
         return jsonify({'ok': False, 'msg': str(e)}), 500
