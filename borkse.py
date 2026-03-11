@@ -23,7 +23,7 @@ SEARCH_URL = (
     "https://live.deutsche-boerse.com/bonds/search"
     "?ISSUER_TYPES=CORPORATE_BONDS&BOND_TYPES=DB&CURRENCIES=USD"
     "&INTEREST_TYPES=FIXED_INTEREST_RATE&TERM_TO_MATURITY_MIN=12"
-    "&YIELD_MAX=8&ORDER_BY=YIELD&ORDER_DIRECTION=DESC"
+    "&YIELD_MAX=9&ORDER_BY=YIELD&ORDER_DIRECTION=DESC"
 )
 
 LIMIT_CANDIDATES = [1000, 500, 200, 100, 50, 25]
@@ -251,4 +251,5 @@ async def main():
     write_to_sheets(bonds)
 
 if __name__ == "__main__":
+
     asyncio.run(main())
