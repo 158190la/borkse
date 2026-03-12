@@ -163,8 +163,28 @@ def fetch_market_snapshot():
             results[name] = {'price': 'N/D', 'chg': 0}
     return results
 
+_PARTE_CACHE = {}  # {'date': str, 'genTime': str, 'data': dict}
+
+def _parte_cache_today():
+    from datetime import datetime
+    today = datetime.now().strftime('%Y-%m-%d')
+    return _PARTE_CACHE if _PARTE_CACHE.get('date') == today else None
+
+@app.route('/api/parte/status', methods=['GET'])
+def api_parte_status():
+    from datetime import datetime
+    cached = _parte_cache_today()
+    return jsonify({'ok': True, 'cached': cached is not None,
+                    'date': datetime.now().strftime('%Y-%m-%d'),
+                    'genTime': cached['genTime'] if cached else None})
+
 @app.route('/api/parte', methods=['GET', 'POST'])
 def api_parte():
+    # Devolver cache del día si existe
+    cached = _parte_cache_today()
+    if cached:
+        return jsonify({'ok': True, 'data': cached['data'],
+                        'cached': True, 'genTime': cached['genTime']})
     try:
         import anthropic, json
         from datetime import datetime
@@ -194,7 +214,13 @@ Sin texto extra, sin backticks."""
         )
         raw   = message.content[0].text.strip().replace('```json','').replace('```','').strip()
         parte = json.loads(raw)
-        return jsonify({'ok': True, 'data': parte})
+        # Guardar en cache del día
+        gen_time = datetime.now().strftime('%H:%M')
+        _PARTE_CACHE.clear()
+        _PARTE_CACHE['date']    = datetime.now().strftime('%Y-%m-%d')
+        _PARTE_CACHE['genTime'] = gen_time
+        _PARTE_CACHE['data']    = parte
+        return jsonify({'ok': True, 'data': parte, 'cached': False, 'genTime': gen_time})
     except Exception as e:
         return jsonify({'ok': False, 'msg': str(e)}), 500
 

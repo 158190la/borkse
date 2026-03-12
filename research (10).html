@@ -1268,9 +1268,14 @@ if (sessionStorage.getItem('auth')) {
 // NAVIGATION
 // ══════════════════════════════════════════════════════════
 function showPage(id) {
-  if (id === 'parte' && !window._parteLoaded && !window._parteGenerando) {
-    window._parteLoaded = true;
-    setTimeout(generarParte, 300);
+  if (id === 'parte') {
+    const cache = getParteCache();
+    if (cache) {
+      renderParteFromCache(cache);
+    } else if (!window._parteLoaded && !window._parteGenerando) {
+      window._parteLoaded = true;
+      setTimeout(generarParte, 300);
+    }
   }
   if (id === 'fci') { /* FCI loads on demand */ }
   if (id === 'mercados') {
@@ -2086,6 +2091,53 @@ Contexto de referencia (estructura esperada por sección):
 
 Respondé SOLO con el JSON, sin texto adicional, sin backticks, sin markdown.`;
 
+// ── PARTE CACHE (localStorage, expira a las 10am del día siguiente) ─────────
+const PARTE_CACHE_KEY = 'ldwm_parte_v1';
+
+function getParteCache() {
+  try {
+    const c = JSON.parse(localStorage.getItem(PARTE_CACHE_KEY));
+    const today = new Date().toISOString().slice(0, 10);
+    return (c && c.date === today) ? c : null;
+  } catch(e) { return null; }
+}
+
+function setParteCache(parte, genTime) {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    localStorage.setItem(PARTE_CACHE_KEY, JSON.stringify({ date: today, genTime, data: parte }));
+  } catch(e) {}
+}
+
+function renderParteFromCache(cache) {
+  const content = document.getElementById('parte-content');
+  const footer  = document.getElementById('parte-footer');
+  content.innerHTML = buildParteShell(false, cache.data);
+  bindParteAccordion();
+  document.getElementById('parte-date').textContent =
+    new Date().toLocaleDateString('es-AR', {weekday:'long', day:'numeric', month:'long', year:'numeric'});
+  document.getElementById('parte-gen-time').textContent = 'Generado: ' + cache.genTime + ' · desde caché';
+  footer.style.display = 'flex';
+  window._parteLoaded = true;
+}
+
+// Scheduler: a las 10:00 invalida el cache y (si la página está abierta) regenera
+function scheduleParteAt10am() {
+  const now   = new Date();
+  const next10 = new Date(now);
+  next10.setHours(10, 0, 5, 0);
+  if (next10 <= now) next10.setDate(next10.getDate() + 1);
+  setTimeout(function() {
+    localStorage.removeItem(PARTE_CACHE_KEY);
+    window._parteLoaded = false;
+    if (document.getElementById('page-parte').classList.contains('active')) {
+      generarParte();
+    }
+    scheduleParteAt10am(); // reprogramar para el día siguiente
+  }, next10 - now);
+}
+scheduleParteAt10am();
+
 async function generarParte() {
   if (window._parteGenerando) return; // evitar llamadas simultáneas
   window._parteGenerando = true;
@@ -2137,11 +2189,14 @@ async function generarParte() {
 
     // Footer
     const now = new Date();
+    const genTime = json.genTime || now.toLocaleTimeString('es-AR');
     document.getElementById('parte-date').textContent =
       now.toLocaleDateString('es-AR', {weekday:'long', day:'numeric', month:'long', year:'numeric'});
-    document.getElementById('parte-gen-time').textContent =
-      'Generado: ' + now.toLocaleTimeString('es-AR');
+    document.getElementById('parte-gen-time').textContent = 'Generado: ' + genTime;
     footer.style.display = 'flex';
+
+    // Guardar en localStorage para el resto del día
+    setParteCache(parte, genTime);
 
     toast('✓ Parte Diario generado', 'success');
 
