@@ -712,6 +712,35 @@ nav {
   height: 1px; background: var(--bdr);
   margin: 0; grid-column: 1/-1;
 }
+/* ── CALCULADORA BONOS GLOBALES ───────────────────────── */
+.glob-wrap{max-width:1100px;margin:0 auto;padding:28px 24px 60px}
+.glob-header{display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:24px}
+.glob-header h1{font-family:var(--serif);font-size:26px;font-style:italic}
+.glob-header .sub{font-family:var(--mono);font-size:11px;color:var(--txt3);margin-top:4px}
+.glob-disclaimer{font-family:var(--mono);font-size:10px;color:var(--txt3);background:rgba(255,200,0,.06);border:1px solid rgba(255,200,0,.15);border-radius:var(--radius);padding:8px 14px;margin-bottom:20px}
+.glob-card{background:var(--surf);border:1px solid var(--bdr);border-radius:var(--radius);padding:20px 22px;margin-bottom:16px}
+.glob-card h3{font-family:var(--mono);font-size:11px;color:var(--txt3);letter-spacing:.08em;text-transform:uppercase;margin-bottom:14px}
+.glob-inputs{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:16px}
+.glob-field label{display:block;font-family:var(--mono);font-size:10px;color:var(--txt3);margin-bottom:5px;letter-spacing:.05em}
+.glob-field select,.glob-field input[type=text],.glob-field input[type=date]{width:100%;background:var(--surf2);border:1px solid var(--bdr2);border-radius:var(--radius);padding:8px 11px;font-family:var(--mono);font-size:13px;color:var(--txt);outline:none;transition:border-color .15s}
+.glob-field select:focus,.glob-field input:focus{border-color:var(--acc)}
+.glob-mode{display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap}
+.glob-mode-btn{padding:7px 16px;border-radius:var(--radius);border:1px solid var(--bdr2);background:none;color:var(--txt3);font-family:var(--mono);font-size:11px;cursor:pointer;transition:all .15s}
+.glob-mode-btn.active{background:var(--acc);border-color:var(--acc);color:#fff}
+.glob-calc-btn{padding:10px 28px;background:var(--acc);color:#fff;border:none;border-radius:var(--radius);font-family:var(--mono);font-size:12px;font-weight:600;cursor:pointer;transition:opacity .15s}
+.glob-calc-btn:hover{opacity:.85}
+.glob-kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-top:18px}
+.glob-kpi{background:var(--surf2);border-radius:var(--radius);padding:12px 14px}
+.glob-kpi .kl{font-family:var(--mono);font-size:10px;color:var(--txt3);margin-bottom:4px}
+.glob-kpi .kv{font-family:var(--mono);font-size:18px;color:var(--txt);font-weight:600}
+.glob-kpi .kv.pos{color:#34c87a}.glob-kpi .kv.hi{color:#4f8ef7}
+.glob-flows{width:100%;border-collapse:collapse;margin-top:12px;font-family:var(--mono);font-size:11px}
+.glob-flows th{text-align:left;color:var(--txt3);padding:6px 10px;border-bottom:1px solid var(--bdr);font-weight:500}
+.glob-flows td{padding:5px 10px;border-bottom:1px solid rgba(255,255,255,.04);color:var(--txt2)}
+.glob-flows tr.past td{opacity:.35}
+.glob-flows tr.next-flow td{color:var(--acc);font-weight:600}
+.glob-flows .bar{display:inline-block;height:4px;background:var(--acc);border-radius:2px;vertical-align:middle;opacity:.6}
+.glob-empty{text-align:center;padding:40px;font-family:var(--mono);font-size:12px;color:var(--txt3)}
 </style>
 </head>
 <body>
@@ -771,6 +800,9 @@ nav {
       <button class="nav-item" data-page="parte" onclick="showPage('parte')">
         <span class="icon">◉</span> Parte Diario
         </button>
+      <button class="nav-item" data-page="globales" onclick="showPage('globales')">
+        <span class="icon">$</span> Calc. Globales
+      </button>
       <button class="nav-item" data-page="scraper" onclick="showPage('scraper')">
         <span class="icon">↻</span> Actualizar Datos
       </button>
@@ -1204,6 +1236,88 @@ if __name__ == '__main__':
 
       </div>
     </div>
+
+    <!-- ── CALCULADORA BONOS GLOBALES ──────────────────────── -->
+    <div id="page-globales" class="page">
+      <div class="glob-wrap">
+
+        <div class="glob-header">
+          <div>
+            <h1>Calculadora Bonos Soberanos USD</h1>
+            <div class="sub">Bonares &amp; Globales · Ley Argentina &amp; Nueva York</div>
+          </div>
+        </div>
+
+        <div class="glob-disclaimer">
+          ⚠ Flujos según prospectos de reestructuración 2020. Verificar contra CNV / ByMA antes de operar.
+        </div>
+
+        <!-- Modo -->
+        <div class="glob-card">
+          <h3>Modo de cálculo</h3>
+          <div class="glob-mode">
+            <button class="glob-mode-btn active" id="glob-m-price" onclick="globSetMode('price')">Precio → TIR</button>
+            <button class="glob-mode-btn" id="glob-m-ytm" onclick="globSetMode('ytm')">TIR → Precio</button>
+          </div>
+
+          <div class="glob-inputs">
+            <div class="glob-field">
+              <label>Bono</label>
+              <select id="glob-bond">
+                <option value="GD30">GD30 — Global 2030 (NY)</option>
+                <option value="AL30">AL30 — Bono 2030 (AR)</option>
+                <option value="GD35">GD35 — Global 2035 (NY)</option>
+                <option value="AL35">AL35 — Bono 2035 (AR)</option>
+                <option value="GD38">GD38 — Global 2038 (NY)</option>
+                <option value="GD41">GD41 — Global 2041 (NY)</option>
+                <option value="GD46">GD46 — Global 2046 (NY)</option>
+              </select>
+            </div>
+            <div class="glob-field" id="glob-f-price">
+              <label>Precio limpio (% VN original)</label>
+              <input type="text" id="glob-precio" placeholder="ej: 68.50">
+            </div>
+            <div class="glob-field" id="glob-f-ytm" style="display:none">
+              <label>TIR deseada (%)</label>
+              <input type="text" id="glob-ytm" placeholder="ej: 12.50">
+            </div>
+            <div class="glob-field">
+              <label>Fecha liquidación</label>
+              <input type="date" id="glob-fecha">
+            </div>
+          </div>
+
+          <button class="glob-calc-btn" onclick="globCalcular()">Calcular</button>
+        </div>
+
+        <!-- Resultados -->
+        <div class="glob-card" id="glob-resultados" style="display:none">
+          <h3>Resultados</h3>
+          <div class="glob-kpis" id="glob-kpis"></div>
+        </div>
+
+        <!-- Flujo de fondos -->
+        <div class="glob-card" id="glob-flows-card" style="display:none">
+          <h3>Flujo de fondos remanente</h3>
+          <div style="overflow-x:auto">
+            <table class="glob-flows">
+              <thead>
+                <tr>
+                  <th>Fecha</th>
+                  <th>Residual anterior</th>
+                  <th>Amortiz.</th>
+                  <th>Cupón</th>
+                  <th>Flujo total</th>
+                  <th>Peso s/ precio sucio</th>
+                </tr>
+              </thead>
+              <tbody id="glob-flows-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+      </div>
+    </div><!-- /page-globales -->
 
   </div><!-- /content -->
 </div><!-- /app -->
@@ -2492,6 +2606,303 @@ document.addEventListener('click',function(e){
     if(r)r.style.display='none';
   }
 });
+
+// ══════════════════════════════════════════════════════════
+// CALCULADORA BONOS SOBERANOS ARGENTINOS USD
+// ══════════════════════════════════════════════════════════
+// Cada entry en schedule: [fecha_ISO, amort_pct_VN_original, coupon_anual_pct]
+// Cupón por pago = (coupon_anual / 2) × residual_antes_de_este_pago / 100
+// Residual comienza en 100 y baja con cada amortización.
+// Fuente: prospectos reestructuración Sep 2020 (CNV / SEC).
+
+const GLOB_DB = {
+  'GD30': {
+    nombre: 'GD30 — Global 2030 (NY)',
+    schedule: [
+      ['2021-01-09', 0,    0.125], ['2021-07-09', 0,    0.125],
+      ['2022-01-09', 0,    0.125], ['2022-07-09', 0,    0.125],
+      ['2023-01-09', 6.25, 0.125], ['2023-07-09', 6.25, 0.500],
+      ['2024-01-09', 6.25, 0.500], ['2024-07-09', 6.25, 1.000],
+      ['2025-01-09', 6.25, 1.000], ['2025-07-09', 6.25, 1.500],
+      ['2026-01-09', 6.25, 1.500], ['2026-07-09', 6.25, 2.500],
+      ['2027-01-09', 6.25, 2.500], ['2027-07-09', 6.25, 2.500],
+      ['2028-01-09', 6.25, 2.500], ['2028-07-09', 6.25, 2.500],
+      ['2029-01-09', 6.25, 2.500], ['2029-07-09', 6.25, 2.500],
+      ['2030-01-09', 6.25, 2.500], ['2030-07-09', 6.25, 2.500],
+    ]
+  },
+  'AL30': {
+    nombre: 'AL30 — Bono 2030 (AR)',
+    schedule: [
+      ['2021-01-09', 0,    0.125], ['2021-07-09', 0,    0.125],
+      ['2022-01-09', 0,    0.125], ['2022-07-09', 0,    0.125],
+      ['2023-01-09', 6.25, 0.125], ['2023-07-09', 6.25, 0.500],
+      ['2024-01-09', 6.25, 0.500], ['2024-07-09', 6.25, 1.000],
+      ['2025-01-09', 6.25, 1.000], ['2025-07-09', 6.25, 1.500],
+      ['2026-01-09', 6.25, 1.500], ['2026-07-09', 6.25, 2.500],
+      ['2027-01-09', 6.25, 2.500], ['2027-07-09', 6.25, 2.500],
+      ['2028-01-09', 6.25, 2.500], ['2028-07-09', 6.25, 2.500],
+      ['2029-01-09', 6.25, 2.500], ['2029-07-09', 6.25, 2.500],
+      ['2030-01-09', 6.25, 2.500], ['2030-07-09', 6.25, 2.500],
+    ]
+  },
+  'GD35': {
+    nombre: 'GD35 — Global 2035 (NY)',
+    schedule: [
+      ['2021-01-09',0,3.625],['2021-07-09',0,3.625],['2022-01-09',0,3.625],['2022-07-09',0,3.625],
+      ['2023-01-09',0,3.625],['2023-07-09',0,3.625],['2024-01-09',0,3.625],['2024-07-09',0,3.625],
+      ['2025-01-09',0,3.625],['2025-07-09',0,3.625],['2026-01-09',0,3.625],['2026-07-09',0,3.625],
+      ['2027-01-09',0,3.625],['2027-07-09',0,3.625],['2028-01-09',0,3.625],['2028-07-09',0,3.625],
+      ['2029-01-09',0,3.625],['2029-07-09',0,3.625],['2030-01-09',0,3.625],
+      ['2030-07-09',10,3.625],['2031-01-09',10,3.625],['2031-07-09',10,3.625],
+      ['2032-01-09',10,3.625],['2032-07-09',10,3.625],['2033-01-09',10,3.625],
+      ['2033-07-09',10,3.625],['2034-01-09',10,3.625],['2034-07-09',10,3.625],
+      ['2035-01-09',10,3.625],
+    ]
+  },
+  'AL35': {
+    nombre: 'AL35 — Bono 2035 (AR)',
+    schedule: [
+      ['2021-01-09',0,3.625],['2021-07-09',0,3.625],['2022-01-09',0,3.625],['2022-07-09',0,3.625],
+      ['2023-01-09',0,3.625],['2023-07-09',0,3.625],['2024-01-09',0,3.625],['2024-07-09',0,3.625],
+      ['2025-01-09',0,3.625],['2025-07-09',0,3.625],['2026-01-09',0,3.625],['2026-07-09',0,3.625],
+      ['2027-01-09',0,3.625],['2027-07-09',0,3.625],['2028-01-09',0,3.625],['2028-07-09',0,3.625],
+      ['2029-01-09',0,3.625],['2029-07-09',0,3.625],['2030-01-09',0,3.625],
+      ['2030-07-09',10,3.625],['2031-01-09',10,3.625],['2031-07-09',10,3.625],
+      ['2032-01-09',10,3.625],['2032-07-09',10,3.625],['2033-01-09',10,3.625],
+      ['2033-07-09',10,3.625],['2034-01-09',10,3.625],['2034-07-09',10,3.625],
+      ['2035-01-09',10,3.625],
+    ]
+  },
+  'GD38': {
+    nombre: 'GD38 — Global 2038 (NY)',
+    schedule: [
+      ['2021-01-09',0,3.875],['2021-07-09',0,3.875],['2022-01-09',0,3.875],['2022-07-09',0,3.875],
+      ['2023-01-09',0,3.875],['2023-07-09',0,3.875],['2024-01-09',0,3.875],['2024-07-09',0,3.875],
+      ['2025-01-09',0,3.875],['2025-07-09',0,3.875],['2026-01-09',0,3.875],['2026-07-09',0,3.875],
+      ['2027-01-09',0,3.875],['2027-07-09',0,3.875],['2028-01-09',0,3.875],['2028-07-09',0,3.875],
+      ['2029-01-09',0,3.875],['2029-07-09',0,3.875],['2030-01-09',0,3.875],['2030-07-09',0,3.875],
+      ['2031-01-09',0,3.875],['2031-07-09',0,3.875],['2032-01-09',0,3.875],['2032-07-09',0,3.875],
+      ['2033-01-09',0,3.875],
+      ['2033-07-09',10,3.875],['2034-01-09',10,3.875],['2034-07-09',10,3.875],
+      ['2035-01-09',10,3.875],['2035-07-09',10,3.875],['2036-01-09',10,3.875],
+      ['2036-07-09',10,3.875],['2037-01-09',10,3.875],['2037-07-09',10,3.875],
+      ['2038-01-09',10,3.875],
+    ]
+  },
+  'GD41': {
+    nombre: 'GD41 — Global 2041 (NY)',
+    schedule: [
+      ['2021-01-09',0,4.125],['2021-07-09',0,4.125],['2022-01-09',0,4.125],['2022-07-09',0,4.125],
+      ['2023-01-09',0,4.125],['2023-07-09',0,4.125],['2024-01-09',0,4.125],['2024-07-09',0,4.125],
+      ['2025-01-09',0,4.125],['2025-07-09',0,4.125],['2026-01-09',0,4.125],['2026-07-09',0,4.125],
+      ['2027-01-09',0,4.125],['2027-07-09',0,4.125],['2028-01-09',0,4.125],['2028-07-09',0,4.125],
+      ['2029-01-09',0,4.125],['2029-07-09',0,4.125],['2030-01-09',0,4.125],['2030-07-09',0,4.125],
+      ['2031-01-09',0,4.125],['2031-07-09',0,4.125],['2032-01-09',0,4.125],['2032-07-09',0,4.125],
+      ['2033-01-09',0,4.125],['2033-07-09',0,4.125],['2034-01-09',0,4.125],['2034-07-09',0,4.125],
+      ['2035-01-09',0,4.125],['2035-07-09',0,4.125],['2036-01-09',0,4.125],['2036-07-09',0,4.125],
+      ['2037-01-09',10,4.125],['2037-07-09',10,4.125],['2038-01-09',10,4.125],['2038-07-09',10,4.125],
+      ['2039-01-09',10,4.125],['2039-07-09',10,4.125],['2040-01-09',10,4.125],['2040-07-09',10,4.125],
+      ['2041-01-09',10,4.125],['2041-07-09',10,4.125],
+    ]
+  },
+  'GD46': {
+    nombre: 'GD46 — Global 2046 (NY)',
+    schedule: [
+      ['2021-01-09',0,3.625],['2021-07-09',0,3.625],['2022-01-09',0,3.625],['2022-07-09',0,3.625],
+      ['2023-01-09',0,3.625],['2023-07-09',0,3.625],['2024-01-09',0,3.625],['2024-07-09',0,3.625],
+      ['2025-01-09',0,3.625],['2025-07-09',0,3.625],['2026-01-09',0,3.625],['2026-07-09',0,3.625],
+      ['2027-01-09',0,3.625],['2027-07-09',0,3.625],['2028-01-09',0,3.625],['2028-07-09',0,3.625],
+      ['2029-01-09',0,3.625],['2029-07-09',0,3.625],['2030-01-09',0,3.625],['2030-07-09',0,3.625],
+      ['2031-01-09',0,3.625],['2031-07-09',0,3.625],['2032-01-09',0,3.625],['2032-07-09',0,3.625],
+      ['2033-01-09',0,3.625],['2033-07-09',0,3.625],['2034-01-09',0,3.625],['2034-07-09',0,3.625],
+      ['2035-01-09',0,3.625],['2035-07-09',0,3.625],['2036-01-09',0,3.625],['2036-07-09',0,3.625],
+      ['2037-01-09',0,3.625],['2037-07-09',0,3.625],['2038-01-09',0,3.625],['2038-07-09',0,3.625],
+      ['2039-01-09',0,3.625],['2039-07-09',0,3.625],['2040-01-09',0,3.625],['2040-07-09',0,3.625],
+      ['2041-01-09',0,3.625],
+      ['2041-07-09',10,3.625],['2042-01-09',10,3.625],['2042-07-09',10,3.625],
+      ['2043-01-09',10,3.625],['2043-07-09',10,3.625],['2044-01-09',10,3.625],
+      ['2044-07-09',10,3.625],['2045-01-09',10,3.625],['2045-07-09',10,3.625],
+      ['2046-07-09',10,3.625],
+    ]
+  },
+};
+
+let globMode = 'price';
+
+function globSetMode(m) {
+  globMode = m;
+  document.getElementById('glob-m-price').classList.toggle('active', m === 'price');
+  document.getElementById('glob-m-ytm').classList.toggle('active', m === 'ytm');
+  document.getElementById('glob-f-price').style.display = m === 'price' ? '' : 'none';
+  document.getElementById('glob-f-ytm').style.display   = m === 'ytm'   ? '' : 'none';
+}
+
+(function globInitDate() {
+  const d = new Date();
+  d.setDate(d.getDate() + 2);
+  if (d.getDay() === 6) d.setDate(d.getDate() + 2);
+  if (d.getDay() === 0) d.setDate(d.getDate() + 1);
+  const el = document.getElementById('glob-fecha');
+  if (el) el.value = d.toISOString().slice(0, 10);
+})();
+
+function globBuildAllFlows(bondKey) {
+  const bond = GLOB_DB[bondKey];
+  if (!bond) return null;
+  let residual = 100;
+  return bond.schedule.map(function([dateStr, amortPct, annualCoupon]) {
+    const coupon = (annualCoupon / 2) * residual / 100;
+    const flow = {
+      date: new Date(dateStr + 'T12:00:00Z'),
+      dateStr,
+      amort: amortPct,
+      coupon: parseFloat(coupon.toFixed(8)),
+      total: parseFloat((amortPct + coupon).toFixed(8)),
+      residualBefore: residual,
+    };
+    residual = parseFloat((residual - amortPct).toFixed(8));
+    flow.residualAfter = residual;
+    return flow;
+  });
+}
+
+function globPV(flows, settlementISO, ytmAnnual) {
+  const sd = new Date(settlementISO + 'T12:00:00Z');
+  const r  = ytmAnnual / 2;
+  return flows.reduce(function(sum, f) {
+    const days = (f.date - sd) / 86400000;
+    const t    = days / 182.5;
+    return sum + f.total / Math.pow(1 + r, t);
+  }, 0);
+}
+
+function globCalcYTM(dirtyPrice, flows, settlementISO) {
+  let ytm = 0.12;
+  for (let i = 0; i < 300; i++) {
+    const pv   = globPV(flows, settlementISO, ytm);
+    const pvUp = globPV(flows, settlementISO, ytm + 0.0001);
+    const deriv = (pvUp - pv) / 0.0001;
+    if (Math.abs(deriv) < 1e-12) break;
+    const delta = (pv - dirtyPrice) / deriv;
+    ytm += delta;
+    if (ytm < -0.99) ytm = -0.5;
+    if (ytm > 10)    ytm = 10;
+    if (Math.abs(delta) < 1e-9) break;
+  }
+  return ytm;
+}
+
+function globCalcDuration(dirtyPrice, flows, settlementISO, ytmAnnual) {
+  const sd = new Date(settlementISO + 'T12:00:00Z');
+  const r  = ytmAnnual / 2;
+  let macW = 0;
+  flows.forEach(function(f) {
+    const days  = (f.date - sd) / 86400000;
+    const tSemi = days / 182.5;
+    const tYrs  = days / 365;
+    const pv    = f.total / Math.pow(1 + r, tSemi);
+    macW += tYrs * pv;
+  });
+  const mac = macW / dirtyPrice;
+  const mod = mac / (1 + ytmAnnual / 2);
+  return { mac, mod };
+}
+
+function globCalcular() {
+  const bondKey = document.getElementById('glob-bond').value;
+  const settl   = document.getElementById('glob-fecha').value;
+  if (!settl) { alert('Ingresá la fecha de liquidación.'); return; }
+
+  const allFlows = globBuildAllFlows(bondKey);
+  if (!allFlows) { alert('Bono no encontrado.'); return; }
+
+  const sd = new Date(settl + 'T12:00:00Z');
+  const futureFlows = allFlows.filter(function(f) { return f.date > sd; });
+  if (!futureFlows.length) { alert('Este bono ya venció para la fecha de liquidación ingresada.'); return; }
+
+  // Residual al día de liquidación
+  let residualAtSettl = 100;
+  allFlows.forEach(function(f) { if (f.date <= sd) residualAtSettl -= f.amort; });
+  residualAtSettl = parseFloat(residualAtSettl.toFixed(8));
+
+  // Interés corrido
+  const pastFlows = allFlows.filter(function(f) { return f.date <= sd; });
+  const lastFlow  = pastFlows[pastFlows.length - 1];
+  const nextFlow  = futureFlows[0];
+  let accruedInterest = 0;
+  if (lastFlow && nextFlow) {
+    const periodDays  = (nextFlow.date - lastFlow.date) / 86400000;
+    const elapsedDays = (sd - lastFlow.date) / 86400000;
+    accruedInterest   = nextFlow.coupon * (elapsedDays / periodDays);
+  }
+
+  let cleanPrice, dirtyPrice, ytm;
+
+  if (globMode === 'price') {
+    const raw = parseFloat(document.getElementById('glob-precio').value.replace(',', '.'));
+    if (isNaN(raw) || raw <= 0) { alert('Ingresá un precio limpio válido.'); return; }
+    cleanPrice = raw;
+    dirtyPrice = cleanPrice + accruedInterest;
+    ytm = globCalcYTM(dirtyPrice, futureFlows, settl);
+  } else {
+    const rawYtm = parseFloat(document.getElementById('glob-ytm').value.replace(',', '.'));
+    if (isNaN(rawYtm)) { alert('Ingresá una TIR válida.'); return; }
+    ytm = rawYtm / 100;
+    dirtyPrice = globPV(futureFlows, settl, ytm);
+    cleanPrice = dirtyPrice - accruedInterest;
+  }
+
+  const { mac, mod } = globCalcDuration(dirtyPrice, futureFlows, settl, ytm);
+  const dv01    = mod * dirtyPrice / 10000;
+  const paridad = cleanPrice / residualAtSettl * 100;
+
+  // Peso de cada flujo
+  const r = ytm / 2;
+  const sd2 = new Date(settl + 'T12:00:00Z');
+  const pvFlows = futureFlows.map(function(f) {
+    const days  = (f.date - sd2) / 86400000;
+    const tSemi = days / 182.5;
+    return f.total / Math.pow(1 + r, tSemi);
+  });
+  const totalPV = pvFlows.reduce(function(a, b) { return a + b; }, 0);
+  const maxPV   = Math.max.apply(null, pvFlows);
+
+  // KPIs
+  const kpis = [
+    { l: 'TIR (YTM)',             v: (ytm * 100).toFixed(2) + '%',   cls: 'pos' },
+    { l: 'Precio limpio',         v: cleanPrice.toFixed(4),           cls: '' },
+    { l: 'Precio sucio',          v: dirtyPrice.toFixed(4),           cls: '' },
+    { l: 'Interés corrido',       v: accruedInterest.toFixed(4),      cls: '' },
+    { l: 'Dur. Macaulay',         v: mac.toFixed(2) + ' a',           cls: 'hi' },
+    { l: 'Dur. Modificada',       v: mod.toFixed(2) + ' a',           cls: 'hi' },
+    { l: 'DV01 (x$100 VN orig.)', v: '$' + dv01.toFixed(4),          cls: '' },
+    { l: 'Residual VN',           v: residualAtSettl.toFixed(4) + '%', cls: '' },
+    { l: 'Paridad s/ residual',   v: paridad.toFixed(2) + '%',        cls: '' },
+    { l: 'Flujos remanentes',     v: futureFlows.length + ' pagos',   cls: '' },
+  ];
+  document.getElementById('glob-kpis').innerHTML = kpis.map(function(k) {
+    return '<div class="glob-kpi"><div class="kl">' + k.l + '</div>'
+         + '<div class="kv ' + k.cls + '">' + k.v + '</div></div>';
+  }).join('');
+  document.getElementById('glob-resultados').style.display = 'block';
+
+  // Tabla de flujos
+  const tbody = document.getElementById('glob-flows-tbody');
+  tbody.innerHTML = futureFlows.map(function(f, i) {
+    const barW   = maxPV > 0 ? Math.round(pvFlows[i] / maxPV * 80) : 0;
+    const weight = totalPV > 0 ? (pvFlows[i] / totalPV * 100).toFixed(1) : '—';
+    return '<tr class="' + (i === 0 ? 'next-flow' : '') + '">'
+      + '<td>' + f.dateStr + '</td>'
+      + '<td>' + f.residualBefore.toFixed(4) + '%</td>'
+      + '<td>' + (f.amort > 0 ? f.amort.toFixed(4) + '%' : '—') + '</td>'
+      + '<td>' + f.coupon.toFixed(4) + '%</td>'
+      + '<td><strong>' + f.total.toFixed(4) + '%</strong></td>'
+      + '<td><span class="bar" style="width:' + barW + 'px"></span> ' + weight + '%</td>'
+      + '</tr>';
+  }).join('');
+  document.getElementById('glob-flows-card').style.display = 'block';
+}
 
 </script>
 </body>
