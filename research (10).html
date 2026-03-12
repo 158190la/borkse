@@ -961,7 +961,15 @@ nav {
         <div class="db-panel">
           <div class="db-pt">Calculadora de Rendimiento</div>
           <div class="calc-grid-2">
-            <div class="calc-field" style="grid-column:1/-1">
+            <div class="calc-field">
+              <label>Tipo</label>
+              <select id="lc-calc-tipo" onchange="lcFilterCalcSym()">
+                <option value="">Todos</option>
+                <option value="LECAP">LECAP</option>
+                <option value="BONCAP">BONCAP</option>
+              </select>
+            </div>
+            <div class="calc-field">
               <label>Instrumento</label>
               <select id="lc-sym" onchange="lcOnSymChange()">
                 <option value="">— Seleccioná —</option>
@@ -976,7 +984,7 @@ nav {
               <input type="number" id="lc-com" value="0.15" step="0.01" oninput="lcCalc()">
             </div>
             <div class="calc-field">
-              <label>Fecha de compra</label>
+              <label>Fecha de liquidación (T+1)</label>
               <input type="date" id="lc-ini" oninput="lcCalc()">
             </div>
             <div class="calc-field">
@@ -1537,7 +1545,7 @@ function lcParseSym(sym) {
   if(mes===undefined) return null;
   return {tipo, venc:new Date(ano,mes,dia)};
 }
-function lcDias(d){const hoy=new Date();hoy.setHours(0,0,0,0);return Math.round((d-hoy)/86400000);}
+function lcDias(d){const hoy=new Date();hoy.setHours(0,0,0,0);hoy.setDate(hoy.getDate()+1);return Math.round((d-hoy)/86400000);}// T+1 liquidación
 function lcFmt(d){return`${d.getDate()} ${MES_NM[d.getMonth()]} ${d.getFullYear()}`;}
 function lcFmtI(d){return d.toISOString().split('T')[0];}
 function lcVF(sym){return(VF_MAP[sym]||1)*100;}
@@ -1583,16 +1591,9 @@ function lcProcess(raw) {
   const px=[...LC_DATA].sort((a,b)=>a.dias-b.dias)[0];
   if(px){document.getElementById('lk5').textContent=px.dias+'d';document.getElementById('lk5s').textContent=px.sym+' · '+lcFmt(px.venc);}
   // Selector
-  const sel=document.getElementById('lc-sym');
-  const prev=sel.value;
-  sel.innerHTML='<option value="">— Seleccioná —</option>';
-  [...LC_DATA].sort((a,b)=>a.dias-b.dias).forEach(d=>{
-    const o=document.createElement('option');
-    o.value=d.sym;
-    o.textContent=`${d.sym} — ${lcFmt(d.venc)} (${d.dias}d)${VF_MAP[d.sym]?' | VF='+d.vf.toFixed(4):''}`;
-    sel.appendChild(o);
-  });
-  if(prev) sel.value=prev;
+  const prev=document.getElementById('lc-sym').value;
+  lcFilterCalcSym();
+  if(prev) document.getElementById('lc-sym').value=prev;
   lcRenderTable(); lcRenderCurva();
   if(sel.value) lcCalc();
 }
@@ -1626,6 +1627,20 @@ function lcRenderTable() {
   }).join('')||'<tr><td colspan="12" style="text-align:center;padding:20px;color:var(--txt3);font-family:var(--mono);font-size:11px">Sin resultados</td></tr>';
 }
 
+function lcFilterCalcSym() {
+  const ftipo=(document.getElementById('lc-calc-tipo')||{}).value||'';
+  const sel=document.getElementById('lc-sym');
+  const prev=sel.value;
+  sel.innerHTML='<option value="">— Seleccioná —</option>';
+  [...LC_DATA].filter(d=>!ftipo||d.tipo===ftipo).sort((a,b)=>a.dias-b.dias).forEach(d=>{
+    const o=document.createElement('option');
+    o.value=d.sym;
+    const badge=d.tipo==='BONCAP'?'[BC] ':'[LC] ';
+    o.textContent=`${badge}${d.sym} — ${lcFmt(d.venc)} (${d.dias}d)${VF_MAP[d.sym]?' | VF='+d.vf.toFixed(4):''}`;
+    sel.appendChild(o);
+  });
+  if(prev) sel.value=prev;
+}
 function lcSelectInstr(sym) {
   document.getElementById('lc-sym').value=sym;
   lcOnSymChange();
@@ -1637,7 +1652,8 @@ function lcOnSymChange() {
   if(!d) return;
   const p=d.ask>0?d.ask:d.precio;
   if(p>0) document.getElementById('lc-precio').value=p.toFixed(3);
-  document.getElementById('lc-ini').value=lcFmtI(new Date());
+  const liq=new Date();liq.setDate(liq.getDate()+1);
+  document.getElementById('lc-ini').value=lcFmtI(liq);// T+1
   document.getElementById('lc-fin').value=lcFmtI(d.venc);
   lcCalc();
 }
@@ -1800,7 +1816,7 @@ async function runScraper(quick=false) {
 // ══════════════════════════════════════════════════════════
 // INIT
 // ══════════════════════════════════════════════════════════
-document.getElementById('lc-ini').value = lcFmtI(new Date());
+const _liqInit=new Date();_liqInit.setDate(_liqInit.getDate()+1);document.getElementById('lc-ini').value=lcFmtI(_liqInit);// T+1
 
 // ══════════════════════════════════════════════════════════
 // MERCADOS — datos en tiempo real via Yahoo Finance
