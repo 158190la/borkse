@@ -741,6 +741,9 @@ nav {
 .glob-flows tr.next-flow td{color:var(--acc);font-weight:600}
 .glob-flows .bar{display:inline-block;height:4px;background:var(--acc);border-radius:2px;vertical-align:middle;opacity:.6}
 .glob-empty{text-align:center;padding:40px;font-family:var(--mono);font-size:12px;color:var(--txt3)}
+.glob-flows td.pos{color:#34c87a}.glob-flows td.neg{color:#f05050}
+.glob-use-btn{font-family:var(--mono);font-size:10px;background:rgba(79,142,247,.12);color:var(--acc);border:1px solid rgba(79,142,247,.2);border-radius:3px;padding:3px 9px;cursor:pointer;transition:background .15s}
+.glob-use-btn:hover{background:rgba(79,142,247,.25)}
 </style>
 </head>
 <body>
@@ -1249,7 +1252,36 @@ if __name__ == '__main__':
         </div>
 
         <div class="glob-disclaimer">
-          ⚠ Flujos según prospectos de reestructuración 2020. Verificar contra CNV / ByMA antes de operar.
+          ⚠ Flujos según prospectos de reestructuración 2020. Precios vía data912.com. Verificar contra CNV / ByMA antes de operar.
+        </div>
+
+        <!-- Tabla de cotizaciones -->
+        <div class="glob-card">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+            <h3 style="margin:0">Cotizaciones en tiempo real (USD)</h3>
+            <div style="display:flex;align-items:center;gap:10px">
+              <span id="glob-prices-ts" style="font-family:var(--mono);font-size:10px;color:var(--txt3)">—</span>
+              <button class="glob-calc-btn" style="padding:6px 14px;font-size:11px" onclick="globLoadPrices()">↻ Actualizar</button>
+            </div>
+          </div>
+          <div style="overflow-x:auto">
+            <table class="glob-flows" id="glob-prices-table">
+              <thead>
+                <tr>
+                  <th>Bono</th>
+                  <th>Último (USD)</th>
+                  <th>Bid</th>
+                  <th>Ask</th>
+                  <th>Var %</th>
+                  <th>VN Residual</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="glob-prices-tbody">
+                <tr><td colspan="7" style="text-align:center;padding:20px;font-family:var(--mono);font-size:11px;color:var(--txt3)">Cargando cotizaciones...</td></tr>
+              </tbody>
+            </table>
+          </div>
         </div>
 
         <!-- Modo -->
@@ -1382,6 +1414,10 @@ if (sessionStorage.getItem('auth')) {
 // NAVIGATION
 // ══════════════════════════════════════════════════════════
 function showPage(id) {
+  if (id === 'globales' && !window._globPricesLoaded) {
+    window._globPricesLoaded = true;
+    globLoadPrices();
+  }
   if (id === 'parte') {
     const cache = getParteCache();
     if (cache) {
@@ -2747,60 +2783,73 @@ function globSetMode(m) {
   if (el) el.value = d.toISOString().slice(0, 10);
 })();
 
+// ── Construcción de flujos ───────────────────────────────
 function globBuildAllFlows(bondKey) {
   const bond = GLOB_DB[bondKey];
   if (!bond) return null;
   let residual = 100;
   return bond.schedule.map(function([dateStr, amortPct, annualCoupon]) {
+    // Cupón = (tasa_anual / 2) × residual_ANTES de esta amortización
     const coupon = (annualCoupon / 2) * residual / 100;
     const flow = {
       date: new Date(dateStr + 'T12:00:00Z'),
       dateStr,
       amort: amortPct,
-      coupon: parseFloat(coupon.toFixed(8)),
-      total: parseFloat((amortPct + coupon).toFixed(8)),
+      coupon: +coupon.toFixed(8),
+      total:  +(amortPct + coupon).toFixed(8),
       residualBefore: residual,
     };
-    residual = parseFloat((residual - amortPct).toFixed(8));
+    residual = +(residual - amortPct).toFixed(8);
     flow.residualAfter = residual;
     return flow;
   });
 }
 
-function globPV(flows, settlementISO, ytmAnnual) {
-  const sd = new Date(settlementISO + 'T12:00:00Z');
-  const r  = ytmAnnual / 2;
-  return flows.reduce(function(sum, f) {
-    const days = (f.date - sd) / 86400000;
-    const t    = days / 182.5;
-    return sum + f.total / Math.pow(1 + r, t);
+// ── Descuento ICMA Actual/Actual (estándar bonos soberanos) ──
+// Convención: t_0 = último cupón antes de liquidación (o fecha emisión si no hay),
+//             t_1 = primer cupón futuro, t_2, t_3 ...
+// Períodos: w = (t_1 - S) / (t_1 - t_0)   [fracción del primer período]
+//           Flujo i (i=0,1,2...): factor = (1 + ytm/2)^(w + i)
+function globICMAw(futureFlows, sd, lastCouponDate) {
+  const firstDate   = futureFlows[0].date;
+  const periodDays  = (firstDate - lastCouponDate) / 86400000;
+  const daysToFirst = (firstDate - sd) / 86400000;
+  return daysToFirst / periodDays;   // w ∈ (0, 1]
+}
+
+function globPV(futureFlows, sd, lastCouponDate, ytmAnnual) {
+  const r = ytmAnnual / 2;
+  const w = globICMAw(futureFlows, sd, lastCouponDate);
+  return futureFlows.reduce(function(sum, f, i) {
+    return sum + f.total / Math.pow(1 + r, w + i);
   }, 0);
 }
 
-function globCalcYTM(dirtyPrice, flows, settlementISO) {
+// Newton-Raphson sobre fórmula ICMA — converge en <20 iteraciones
+function globCalcYTM(dirtyPrice, futureFlows, sd, lastCouponDate) {
+  function pv(y) { return globPV(futureFlows, sd, lastCouponDate, y); }
   let ytm = 0.12;
   for (let i = 0; i < 300; i++) {
-    const pv   = globPV(flows, settlementISO, ytm);
-    const pvUp = globPV(flows, settlementISO, ytm + 0.0001);
-    const deriv = (pvUp - pv) / 0.0001;
-    if (Math.abs(deriv) < 1e-12) break;
-    const delta = (pv - dirtyPrice) / deriv;
-    ytm += delta;
-    if (ytm < -0.99) ytm = -0.5;
-    if (ytm > 10)    ytm = 10;
-    if (Math.abs(delta) < 1e-9) break;
+    const f0    = pv(ytm);
+    const f1    = pv(ytm + 1e-6);
+    const deriv = (f1 - f0) / 1e-6;
+    if (Math.abs(deriv) < 1e-14) break;
+    const delta = (f0 - dirtyPrice) / deriv;
+    ytm -= delta;
+    ytm  = Math.max(-0.99, Math.min(10, ytm));
+    if (Math.abs(delta) < 1e-10) break;
   }
   return ytm;
 }
 
-function globCalcDuration(dirtyPrice, flows, settlementISO, ytmAnnual) {
-  const sd = new Date(settlementISO + 'T12:00:00Z');
-  const r  = ytmAnnual / 2;
+// Duration de Macaulay (en años) y Modificada — convención ICMA
+function globCalcDuration(dirtyPrice, futureFlows, sd, lastCouponDate, ytmAnnual) {
+  const r = ytmAnnual / 2;
+  const w = globICMAw(futureFlows, sd, lastCouponDate);
   let macW = 0;
-  flows.forEach(function(f) {
-    const days  = (f.date - sd) / 86400000;
-    const tSemi = days / 182.5;
-    const tYrs  = days / 365;
+  futureFlows.forEach(function(f, i) {
+    const tSemi = w + i;          // períodos semestrales
+    const tYrs  = tSemi / 2;     // años
     const pv    = f.total / Math.pow(1 + r, tSemi);
     macW += tYrs * pv;
   });
@@ -2809,6 +2858,7 @@ function globCalcDuration(dirtyPrice, flows, settlementISO, ytmAnnual) {
   return { mac, mod };
 }
 
+// ── Calculadora principal ────────────────────────────────
 function globCalcular() {
   const bondKey = document.getElementById('glob-bond').value;
   const settl   = document.getElementById('glob-fecha').value;
@@ -2819,67 +2869,68 @@ function globCalcular() {
 
   const sd = new Date(settl + 'T12:00:00Z');
   const futureFlows = allFlows.filter(function(f) { return f.date > sd; });
-  if (!futureFlows.length) { alert('Este bono ya venció para la fecha de liquidación ingresada.'); return; }
+  if (!futureFlows.length) { alert('Este bono ya venció para la fecha ingresada.'); return; }
 
-  // Residual al día de liquidación
+  // Residual VN al momento de liquidación
   let residualAtSettl = 100;
   allFlows.forEach(function(f) { if (f.date <= sd) residualAtSettl -= f.amort; });
-  residualAtSettl = parseFloat(residualAtSettl.toFixed(8));
+  residualAtSettl = +residualAtSettl.toFixed(8);
 
-  // Interés corrido
+  // Último cupón antes de liquidación (necesario para ICMA)
   const pastFlows = allFlows.filter(function(f) { return f.date <= sd; });
   const lastFlow  = pastFlows[pastFlows.length - 1];
-  const nextFlow  = futureFlows[0];
-  let accruedInterest = 0;
-  if (lastFlow && nextFlow) {
-    const periodDays  = (nextFlow.date - lastFlow.date) / 86400000;
-    const elapsedDays = (sd - lastFlow.date) / 86400000;
-    accruedInterest   = nextFlow.coupon * (elapsedDays / periodDays);
-  }
+  // Si no hay cupón previo (bono muy nuevo), usamos fecha sintética = primer futuro - 6 meses
+  const lastCouponDate = lastFlow
+    ? lastFlow.date
+    : new Date(futureFlows[0].date.getTime() - 182.5 * 86400000);
+
+  // Interés corrido — Actual/Actual sobre el cupón del próximo período
+  const nextFlow   = futureFlows[0];
+  const periodDays = (nextFlow.date - lastCouponDate) / 86400000;
+  const elapsed    = (sd - lastCouponDate) / 86400000;
+  const accruedInterest = nextFlow.coupon * (elapsed / periodDays);
 
   let cleanPrice, dirtyPrice, ytm;
 
   if (globMode === 'price') {
     const raw = parseFloat(document.getElementById('glob-precio').value.replace(',', '.'));
-    if (isNaN(raw) || raw <= 0) { alert('Ingresá un precio limpio válido.'); return; }
+    if (isNaN(raw) || raw <= 0) { alert('Ingresá un precio limpio válido (ej: 68.50).'); return; }
     cleanPrice = raw;
     dirtyPrice = cleanPrice + accruedInterest;
-    ytm = globCalcYTM(dirtyPrice, futureFlows, settl);
+    ytm = globCalcYTM(dirtyPrice, futureFlows, sd, lastCouponDate);
   } else {
     const rawYtm = parseFloat(document.getElementById('glob-ytm').value.replace(',', '.'));
-    if (isNaN(rawYtm)) { alert('Ingresá una TIR válida.'); return; }
+    if (isNaN(rawYtm)) { alert('Ingresá una TIR válida (ej: 12.50).'); return; }
     ytm = rawYtm / 100;
-    dirtyPrice = globPV(futureFlows, settl, ytm);
+    dirtyPrice = globPV(futureFlows, sd, lastCouponDate, ytm);
     cleanPrice = dirtyPrice - accruedInterest;
   }
 
-  const { mac, mod } = globCalcDuration(dirtyPrice, futureFlows, settl, ytm);
-  const dv01    = mod * dirtyPrice / 10000;
-  const paridad = cleanPrice / residualAtSettl * 100;
+  const { mac, mod } = globCalcDuration(dirtyPrice, futureFlows, sd, lastCouponDate, ytm);
+  const dv01    = mod * dirtyPrice / 10000;  // por cada $100 VN original
+  const paridad = residualAtSettl > 0 ? cleanPrice / residualAtSettl * 100 : 0;
 
-  // Peso de cada flujo
+  // Peso PV de cada flujo (para la tabla)
   const r = ytm / 2;
-  const sd2 = new Date(settl + 'T12:00:00Z');
-  const pvFlows = futureFlows.map(function(f) {
-    const days  = (f.date - sd2) / 86400000;
-    const tSemi = days / 182.5;
-    return f.total / Math.pow(1 + r, tSemi);
+  const w = globICMAw(futureFlows, sd, lastCouponDate);
+  const pvFlows = futureFlows.map(function(f, i) {
+    return f.total / Math.pow(1 + r, w + i);
   });
   const totalPV = pvFlows.reduce(function(a, b) { return a + b; }, 0);
   const maxPV   = Math.max.apply(null, pvFlows);
 
   // KPIs
   const kpis = [
-    { l: 'TIR (YTM)',             v: (ytm * 100).toFixed(2) + '%',   cls: 'pos' },
-    { l: 'Precio limpio',         v: cleanPrice.toFixed(4),           cls: '' },
-    { l: 'Precio sucio',          v: dirtyPrice.toFixed(4),           cls: '' },
-    { l: 'Interés corrido',       v: accruedInterest.toFixed(4),      cls: '' },
-    { l: 'Dur. Macaulay',         v: mac.toFixed(2) + ' a',           cls: 'hi' },
-    { l: 'Dur. Modificada',       v: mod.toFixed(2) + ' a',           cls: 'hi' },
-    { l: 'DV01 (x$100 VN orig.)', v: '$' + dv01.toFixed(4),          cls: '' },
+    { l: 'TIR (YTM)',             v: (ytm * 100).toFixed(4) + '%',    cls: 'pos' },
+    { l: 'Precio limpio',         v: cleanPrice.toFixed(4),            cls: '' },
+    { l: 'Precio sucio',          v: dirtyPrice.toFixed(4),            cls: '' },
+    { l: 'Interés corrido',       v: accruedInterest.toFixed(6),       cls: '' },
+    { l: 'Dur. Macaulay',         v: mac.toFixed(4) + ' a',            cls: 'hi' },
+    { l: 'Dur. Modificada',       v: mod.toFixed(4) + ' a',            cls: 'hi' },
+    { l: 'DV01 (x$100 VN orig.)', v: '$' + dv01.toFixed(6),           cls: '' },
     { l: 'Residual VN',           v: residualAtSettl.toFixed(4) + '%', cls: '' },
-    { l: 'Paridad s/ residual',   v: paridad.toFixed(2) + '%',        cls: '' },
-    { l: 'Flujos remanentes',     v: futureFlows.length + ' pagos',   cls: '' },
+    { l: 'Paridad s/ residual',   v: paridad.toFixed(2) + '%',         cls: '' },
+    { l: 'Flujos remanentes',     v: futureFlows.length + ' pagos',    cls: '' },
   ];
   document.getElementById('glob-kpis').innerHTML = kpis.map(function(k) {
     return '<div class="glob-kpi"><div class="kl">' + k.l + '</div>'
@@ -2887,22 +2938,105 @@ function globCalcular() {
   }).join('');
   document.getElementById('glob-resultados').style.display = 'block';
 
-  // Tabla de flujos
+  // Tabla de flujos de fondos
   const tbody = document.getElementById('glob-flows-tbody');
   tbody.innerHTML = futureFlows.map(function(f, i) {
     const barW   = maxPV > 0 ? Math.round(pvFlows[i] / maxPV * 80) : 0;
-    const weight = totalPV > 0 ? (pvFlows[i] / totalPV * 100).toFixed(1) : '—';
+    const weight = totalPV > 0 ? (pvFlows[i] / totalPV * 100).toFixed(2) : '—';
     return '<tr class="' + (i === 0 ? 'next-flow' : '') + '">'
       + '<td>' + f.dateStr + '</td>'
       + '<td>' + f.residualBefore.toFixed(4) + '%</td>'
       + '<td>' + (f.amort > 0 ? f.amort.toFixed(4) + '%' : '—') + '</td>'
-      + '<td>' + f.coupon.toFixed(4) + '%</td>'
-      + '<td><strong>' + f.total.toFixed(4) + '%</strong></td>'
+      + '<td>' + f.coupon.toFixed(6) + '%</td>'
+      + '<td><strong>' + f.total.toFixed(6) + '%</strong></td>'
       + '<td><span class="bar" style="width:' + barW + 'px"></span> ' + weight + '%</td>'
       + '</tr>';
   }).join('');
   document.getElementById('glob-flows-card').style.display = 'block';
 }
+
+// ── Cotizaciones desde data912.com ───────────────────────
+// Mapeo: clave GLOB_DB → símbolos en arg_bonds (USD = sufijo D)
+const GLOB_SYMS = {
+  GD30: ['GD30D','GD30'],
+  AL30: ['AL30D','AL30'],
+  GD35: ['GD35D','GD35'],
+  AL35: ['AL35D','AL35'],
+  GD38: ['GD38D','GD38'],
+  GD41: ['GD41D','GD41'],
+  GD46: ['GD46D','GD46'],
+};
+
+async function globLoadPrices() {
+  const tsEl  = document.getElementById('glob-prices-ts');
+  const tbody = document.getElementById('glob-prices-tbody');
+  tsEl.textContent = 'Actualizando...';
+  try {
+    const res  = await fetch('https://data912.com/live/arg_bonds');
+    const data = await res.json();
+
+    // Indexar por símbolo
+    const bySymbol = {};
+    data.forEach(function(b) { bySymbol[b.symbol] = b; });
+
+    const rows = Object.keys(GLOB_SYMS).map(function(key) {
+      // Buscar el primer símbolo que exista en la respuesta
+      const syms  = GLOB_SYMS[key];
+      const found = syms.reduce(function(acc, s) { return acc || bySymbol[s]; }, null);
+
+      // Calcular residual VN actual con la fecha de hoy + 2d (T+2)
+      const allFlows = globBuildAllFlows(key);
+      const sd = new Date(); sd.setDate(sd.getDate() + 2);
+      let residual = 100;
+      if (allFlows) allFlows.forEach(function(f) { if (f.date <= sd) residual -= f.amort; });
+      residual = +residual.toFixed(4);
+
+      if (!found) {
+        return '<tr>'
+          + '<td style="font-family:var(--mono);font-weight:600">' + key + '</td>'
+          + '<td colspan="4" style="color:var(--txt3);font-family:var(--mono);font-size:10px">Sin datos</td>'
+          + '<td>' + residual + '%</td>'
+          + '<td></td></tr>';
+      }
+
+      const px  = found.c || found.px_bid || 0;
+      const bid = found.px_bid || 0;
+      const ask = found.px_ask || 0;
+      const chg = found.pct_change || 0;
+      const chgCls  = chg > 0 ? 'pos' : chg < 0 ? 'neg' : '';
+      const chgSign = chg > 0 ? '+' : '';
+      const sym = found.symbol;
+
+      return '<tr>'
+        + '<td style="font-family:var(--mono);font-weight:600">' + key
+        +   '<span style="font-size:9px;color:var(--txt3);margin-left:4px">(' + sym + ')</span></td>'
+        + '<td style="font-family:var(--mono)">' + (px ? px.toFixed(4) : '—') + '</td>'
+        + '<td style="font-family:var(--mono);color:var(--txt3)">' + (bid ? bid.toFixed(4) : '—') + '</td>'
+        + '<td style="font-family:var(--mono);color:var(--txt3)">' + (ask ? ask.toFixed(4) : '—') + '</td>'
+        + '<td class="' + chgCls + '" style="font-family:var(--mono)">'
+        +   chgSign + chg.toFixed(2) + '%</td>'
+        + '<td style="font-family:var(--mono);color:var(--txt3)">' + residual + '%</td>'
+        + '<td><button class="glob-use-btn" onclick="globUsePrice(\'' + key + '\',' + px + ')">Usar ↓</button></td>'
+        + '</tr>';
+    });
+
+    tbody.innerHTML = rows.join('');
+    tsEl.textContent = 'Act: ' + new Date().toLocaleTimeString('es-AR');
+  } catch(e) {
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;font-family:var(--mono);font-size:11px;color:var(--txt3)">Error al conectar con data912.com</td></tr>';
+    tsEl.textContent = 'Error';
+  }
+}
+
+// Pre-carga el precio en el calculador y selecciona el bono
+function globUsePrice(bondKey, px) {
+  document.getElementById('glob-bond').value = bondKey;
+  globSetMode('price');
+  document.getElementById('glob-precio').value = px.toFixed(4);
+  // Scroll suave al calculador
+  document.getElementById('glob-m-price').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
 
 </script>
 </body>
