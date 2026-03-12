@@ -1524,9 +1524,11 @@ function loadBondsFromAPI(data) {
 // LECAPS
 // ══════════════════════════════════════════════════════════
 const VF_MAP = {
+  // LECAPs
   'S16M6':1.0462,'S17A6':1.1013,'S30A6':1.2749,'S29Y6':1.3204,
-  'T30J6':1.4488,'S31L6':1.1768,'S31G6':1.2706,'S30O6':1.3528,
-  'S30N6':1.2989,'T30A7':1.5734,
+  'S31L6':1.1768,'S31G6':1.2706,'S30O6':1.3528,'S30N6':1.2989,
+  // BONCAPs
+  'T30J6':1.4488,'T15E7':1.6110,'T30A7':1.5734,'T31Y7':1.5156,'T30J7':1.5604,
 };
 const MES_LC={E:0,F:1,M:2,A:3,Y:4,J:5,L:6,G:7,S:8,O:9,N:10,D:11};
 const MES_NM=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
@@ -1553,12 +1555,18 @@ function lcTEM(pe,vf,dias){return dias>0?(Math.pow(vf/pe,30/dias)-1)*100:null;}
 function lcTEA(pe,vf,dias){return dias>0?(Math.pow(vf/pe,365/dias)-1)*100:null;}
 function lcPrecioImpl(tem,vf,dias){return vf/Math.pow(1+tem/100,dias/30);}
 
+const BONCAP_SYMS = new Set(['T30J6','T15E7','T30A7','T31Y7','T30J7']);
+
 async function lcLoad() {
   document.getElementById('lc-last-update').textContent='Cargando...';
   try {
-    const r=await fetch('https://data912.com/live/arg_notes');
-    const raw=await r.json();
-    lcProcess(raw);
+    const [rNotes, rBonds] = await Promise.all([
+      fetch('https://data912.com/live/arg_notes'),
+      fetch('https://data912.com/live/arg_bonds')
+    ]);
+    const [notesRaw, bondsRaw] = await Promise.all([rNotes.json(), rBonds.json()]);
+    const boncaps = bondsRaw.filter(b => BONCAP_SYMS.has(b.symbol));
+    lcProcess([...notesRaw, ...boncaps]);
     document.getElementById('lc-last-update').textContent='Act: '+new Date().toLocaleTimeString('es-AR');
   } catch(e) {
     document.getElementById('lc-last-update').textContent='Error de conexión';
