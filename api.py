@@ -342,14 +342,50 @@ def _calc_rendimientos(nombre, vcp_hoy):
 
 _REND_CACHE = {}
 
-def _calc_rendimientos_cached(nombre, vcp_hoy):
+def _calc_rendimientos_from_sheet(nombre):
+    """
+    Calcula todos los rendimientos usando solo datos del sheet.
+    El ultimo punto del sheet actua como valor de hoy.
+    """
+    from datetime import datetime, timedelta
+
+    series = _gs_read_series(nombre, '1970-01-01', '9999-12-31')
+    if not series:
+        return {'day': None, 'week': None, 'month': None, 'ytd': None, 'year': None}
+
+    last       = series[-1]
+    vcp_ultimo = last['vcp']
+    ultima_dt  = datetime.strptime(last['fecha'], '%Y-%m-%d')
+
+    rend_day = None
+    if len(series) >= 2:
+        prev = series[-2]
+        if prev['vcp']:
+            rend_day = round((vcp_ultimo / prev['vcp'] - 1) * 100, 4)
+
+    def rend_desde_fecha(target_str):
+        candidates = [p for p in series if p['fecha'] <= target_str]
+        if not candidates:
+            return None
+        base_vcp = candidates[-1]['vcp']
+        return round((vcp_ultimo / base_vcp - 1) * 100, 4) if base_vcp else None
+
+    return {
+        'day':   rend_day,
+        'week':  rend_desde_fecha((ultima_dt - timedelta(days=7)).strftime('%Y-%m-%d')),
+        'month': rend_desde_fecha((ultima_dt - timedelta(days=30)).strftime('%Y-%m-%d')),
+        'ytd':   rend_desde_fecha(f'{ultima_dt.year}-01-01'),
+        'year':  rend_desde_fecha((ultima_dt - timedelta(days=365)).strftime('%Y-%m-%d')),
+    }
+
+def _calc_rendimientos_cached(nombre):
     import time
     key = nombre.lower()
     now = time.time()
     cached = _REND_CACHE.get(key)
     if cached and now - cached['ts'] < 4 * 3600:
         return cached['data']
-    data = _calc_rendimientos(nombre, vcp_hoy)
+    data = _calc_rendimientos_from_sheet(nombre)
     _REND_CACHE[key] = {'data': data, 'ts': now}
     return data
 
@@ -598,20 +634,27 @@ def api_fci_ficha():
     if not nombre_q:
         return jsonify({'ok': False, 'msg': 'Pasar ?nombre=<nombre del fondo>'}), 400
     try:
+        # Resolver nombre exacto y metadata (tipo, patrimonio) desde ArgentinaDatos
         fondos = _load_ad('ultimo')
         f = _find(fondos, nombre_q)
-        if not f:
-            return jsonify({'ok': False, 'msg': f'Fondo no encontrado'}), 404
-        hist = _calc_rendimientos(f['nombre'], f['vcp'])
+        nombre_real = f['nombre'] if f else nombre_q
+
+        # VCP y rendimientos: solo desde el sheet
+        last_row = _gs_read_series(nombre_real, '1970-01-01', '9999-12-31')
+        if not last_row:
+            return jsonify({'ok': False, 'msg': 'Fondo no encontrado en el sheet historico'}), 404
+        vcp_sheet = last_row[-1]['vcp']
+
+        hist = _calc_rendimientos_cached(nombre_real)
         return jsonify({'ok': True, 'data': {
-            'fondoId':    abs(hash(f['nombre'])) % 10000000,
-            'claseId':    abs(hash(f['nombre'])) % 10000000,
-            'nombre':     f['nombre'],
+            'fondoId':    abs(hash(nombre_real)) % 10000000,
+            'claseId':    abs(hash(nombre_real)) % 10000000,
+            'nombre':     nombre_real,
             'gerente':    '',
-            'tipo':       f['horizonte'] or f['tipo'],
+            'tipo':       (f['horizonte'] or f['tipo']) if f else '',
             'moneda':     'ARS',
-            'vcp':        f['vcp'],
-            'patrimonio': f['patrimonio'],
+            'vcp':        vcp_sheet,
+            'patrimonio': f['patrimonio'] if f else None,
             'rendimientos': hist,
         }})
     except Exception as e:
@@ -620,10 +663,7 @@ def api_fci_ficha():
 
 @app.route('/api/fci/historico', methods=['GET'])
 def api_fci_historico():
-    """
-    Serie historica de VCP combinando Google Sheets + punto vivo de hoy.
-    """
-    from datetime import date
+    """Serie historica de VCP desde Google Sheets."""
     nombre_q = request.args.get('nombre', '').strip()
     from_d   = request.args.get('desde', '').strip()
     to_d     = request.args.get('hasta', '').strip()
@@ -634,17 +674,7 @@ def api_fci_historico():
         f = _find(fondos, nombre_q)
         nombre_real = f['nombre'] if f else nombre_q
 
-        # Historico desde Google Sheets
         series = _gs_read_series(nombre_real, from_d, to_d)
-
-        # Agregar punto de hoy desde ArgentinaDatos si el tick aun no corrio hoy
-        today = date.today().strftime('%Y-%m-%d')
-        if f and f.get('vcp') and today <= to_d:
-            fechas = {p['fecha'] for p in series}
-            if today not in fechas:
-                series.append({'fecha': today, 'vcp': f['vcp']})
-                series.sort(key=lambda x: x['fecha'])
-
         return jsonify({'ok': True, 'data': series})
     except Exception as e:
         return jsonify({'ok': False, 'msg': str(e)}), 500
