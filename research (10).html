@@ -6,6 +6,8 @@
 <title>LD Wealth Management — Portal</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+<script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Mono:wght@300;400;500&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -1172,7 +1174,10 @@ if __name__ == '__main__':
         <div id="fci-chart-panel" style="display:none" class="fci-chart-panel">
           <div class="fci-chart-header">
             <span class="fci-chart-title-label">Evolucion acumulada (base 100)</span>
-            <span style="font-family:var(--mono);font-size:10px;color:var(--txt3)" id="fci-chart-label">Ultimos 30 dias</span>
+            <div style="display:flex;align-items:center;gap:10px">
+              <span style="font-family:var(--mono);font-size:10px;color:var(--txt3)" id="fci-chart-label">Ultimos 30 dias</span>
+              <button id="fci-reset-zoom-btn" onclick="fciResetZoom()" style="display:none;font-family:var(--mono);font-size:10px;background:var(--surf2);border:1px solid var(--bdr2);color:var(--txt3);padding:2px 8px;border-radius:4px;cursor:pointer" title="Resetear zoom">↺ zoom</button>
+            </div>
           </div>
           <canvas id="fci-canvas"></canvas>
         </div>
@@ -2621,7 +2626,17 @@ async function fciRenderChart(){
         tooltip:{backgroundColor:'#0e1018',borderColor:'#1c2035',borderWidth:1,
           titleColor:'#8892a8',bodyColor:'#e8ecf5',
           titleFont:{family:'DM Mono',size:10},bodyFont:{family:'DM Mono',size:11},
-          callbacks:{label:function(c){return ' '+c.dataset.label+': '+(c.parsed.y>=0?'+':'')+c.parsed.y.toFixed(2)+'%';}}}
+          callbacks:{label:function(c){return ' '+c.dataset.label+': '+(c.parsed.y>=0?'+':'')+c.parsed.y.toFixed(2)+'%';}}},
+        zoom:{
+          pan:{enabled:true,mode:'x',threshold:5,onPan:function(){var btn=document.getElementById('fci-reset-zoom-btn');if(btn)btn.style.display='';}},
+          zoom:{
+            wheel:{enabled:true,speed:0.1},
+            pinch:{enabled:true},
+            mode:'x',
+            onZoom:function(){var btn=document.getElementById('fci-reset-zoom-btn');if(btn)btn.style.display='';},
+            onZoomComplete:function(){var btn=document.getElementById('fci-reset-zoom-btn');if(btn)btn.style.display='';}
+          }
+        }
       }
     }
   });
@@ -2633,7 +2648,13 @@ function fciSetPeriod(btn,days){
   btn.classList.add('active');
   var lbl={30:'Ultimos 30 dias',90:'Ultimos 3 meses',180:'Ultimos 6 meses',365:'Ultimo anno'};
   document.getElementById('fci-chart-label').textContent=lbl[days]||'';
+  var btn2=document.getElementById('fci-reset-zoom-btn');if(btn2)btn2.style.display='none';
   fciRenderChart();
+}
+
+function fciResetZoom(){
+  if(fciChart){fciChart.resetZoom();}
+  var btn=document.getElementById('fci-reset-zoom-btn');if(btn)btn.style.display='none';
 }
 
 document.addEventListener('click',function(e){
