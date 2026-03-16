@@ -912,9 +912,9 @@ input:checked + .db-tog-slider:before { transform:translateX(17px); background:v
           <option value="100">100+ bps</option><option value="200">200+ bps</option><option value="300">300+ bps</option>
         </select>
         <div class="db-tog-wrap">
-          <span class="db-tog-lbl active" id="db-lbl-cal">Calificación</span>
+          <span class="db-tog-lbl active" id="db-lbl-cal">Rating LD</span>
           <label class="db-toggle"><input type="checkbox" id="db-tog-ld" onchange="toggleDbLD(this.checked)"><span class="db-tog-slider"></span></label>
-          <span class="db-tog-lbl" id="db-lbl-ld">Score LD</span>
+          <span class="db-tog-lbl" id="db-lbl-ld">Calificación</span>
         </div>
         <span style="font-family:var(--mono);font-size:10px;color:var(--txt3)" id="db-meta">—</span>
       </div>
@@ -1480,7 +1480,7 @@ let DB = [], hC = null, sC = null, curveC = null, dbSc = 'ya', dbSa = false, dbI
 let dbUseLD = false;
 const dbAvg = a => a.length ? a.reduce((x,y)=>x+y,0)/a.length : null;
 const cM = {'AAA':'#00ff88','AA':'#7cfc00','A':'#00d4ff','BBB':'#ffd700','BB':'#ff9f40','B':'#ff6b35','CCC':'#ff4444','NR':'#64748b'};
-function dbRb(b) { return dbUseLD ? b.score_bucket : b.r_bucket; }
+function dbRb(b) { return dbUseLD ? b.cal_bucket : b.r_bucket; }
 function toggleDbLD(on) {
   dbUseLD = on;
   document.getElementById('db-lbl-cal').classList.toggle('active', !on);
@@ -1613,7 +1613,7 @@ function dbRHist(b) {
 }
 
 function dbRScatter(b) {
-  const pts=b.filter(x=>x.duration&&x.yield).map(x=>({x:x.duration,y:x.yield,issuer:x.issuer,spread:x.spread,score:x.score,rb:dbRb(x)}));
+  const pts=b.filter(x=>x.duration&&x.yield).map(x=>({x:x.duration,y:x.yield,issuer:x.issuer,spread:x.spread,cal:x.cal_rating,rb:dbRb(x)}));
   if(sC) sC.destroy();
   sC=new Chart(document.getElementById('cs'),{type:'scatter',data:{datasets:[{data:pts,backgroundColor:pts.map(p=>(cM[p.rb]||'#64748b')+'99'),borderColor:pts.map(p=>cM[p.rb]||'#64748b'),borderWidth:1,pointRadius:4,pointHoverRadius:7}]},options:{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>`${c.raw.issuer}\nYield: ${c.raw.y.toFixed(2)}%  Dur: ${c.raw.x.toFixed(1)}y\nSpread: ${c.raw.spread!=null?Math.round(c.raw.spread*100)+' bps':'N/D'}  [${c.raw.rb}]`},backgroundColor:'#0e1018',borderColor:'#1c2035',borderWidth:1,bodyFont:{family:'DM Mono',size:11}}},scales:{x:{title:{display:true,text:'Duración (años)',color:'#545d75',font:{family:'DM Mono',size:9}},ticks:{color:'#545d75',font:{family:'DM Mono',size:9}},grid:{color:'#1c2035'}},y:{title:{display:true,text:'Yield (%)',color:'#545d75',font:{family:'DM Mono',size:9}},ticks:{color:'#545d75',font:{family:'DM Mono',size:9}},grid:{color:'#1c2035'}}}}});
 }
