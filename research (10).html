@@ -890,8 +890,6 @@ input:checked + .db-tog-slider:before { transform:translateX(17px); background:v
         <span class="db-fl">Rating:</span>
         <select class="db-select" id="fr" onchange="dbRender()">
           <option value="">Todos</option>
-          <option>AAA</option><option>AA</option><option>A</option><option>BBB</option>
-          <option>BB</option><option>B</option><option>CCC</option><option>NR</option>
         </select>
         <span class="db-fl">Plazo:</span>
         <select class="db-select" id="ft" onchange="dbRender()">
@@ -1479,12 +1477,25 @@ function toast(msg, type = 'info', dur = 3500) {
 let DB = [], hC = null, sC = null, curveC = null, dbSc = 'ya', dbSa = false, dbID = [];
 let dbUseLD = false;
 const dbAvg = a => a.length ? a.reduce((x,y)=>x+y,0)/a.length : null;
-const cM = {'AAA':'#00ff88','AA':'#7cfc00','A':'#00d4ff','BBB':'#ffd700','BB':'#ff9f40','B':'#ff6b35','CCC':'#ff4444','NR':'#64748b'};
+const DB_LD_ORDER=['AAA','AA','A','BBB','BB','B','CCC','NR'];
+const DB_LD_COLORS={'AAA':'#00ff88','AA':'#7cfc00','A':'#00d4ff','BBB':'#ffd700','BB':'#ff9f40','B':'#ff6b35','CCC':'#ff4444','NR':'#64748b'};
+const DB_CAL_ORDER=['AAA','AA+','AA','AA-','A+','A','A-','BBB+','BBB','BBB-','BB+','BB','BB-','B+','B','B-','CCC+','CCC','CCC-','CC','C','D','NR'];
+const DB_CAL_COLORS={'AAA':'#00ff88','AA+':'#44ff99','AA':'#7cfc00','AA-':'#a0e000','A+':'#c8d400','A':'#00d4ff','A-':'#00bcd4','BBB+':'#ffe800','BBB':'#ffd700','BBB-':'#ffc000','BB+':'#ffb040','BB':'#ff9f40','BB-':'#ff8840','B+':'#ff7838','B':'#ff6b35','B-':'#ff5028','CCC+':'#ff5050','CCC':'#ff4444','CCC-':'#e03030','CC':'#cc2222','C':'#aa1111','D':'#880000','NR':'#64748b'};
+function cM(bucket){return dbUseLD?DB_CAL_COLORS[bucket]:DB_LD_COLORS[bucket];}
+function dbCurOrder(){return dbUseLD?DB_CAL_ORDER:DB_LD_ORDER;}
 function dbRb(b) { return dbUseLD ? b.cal_bucket : b.r_bucket; }
+function dbRebuildRatingFilter(){
+  const sel=document.getElementById('fr');
+  const prev=sel.value;
+  sel.innerHTML='<option value="">Todos</option>';
+  dbCurOrder().forEach(r=>{const o=document.createElement('option');o.value=o.textContent=r;sel.appendChild(o);});
+  sel.value=dbCurOrder().includes(prev)?prev:'';
+}
 function toggleDbLD(on) {
   dbUseLD = on;
   document.getElementById('db-lbl-cal').classList.toggle('active', !on);
   document.getElementById('db-lbl-ld').classList.toggle('active', on);
+  dbRebuildRatingFilter();
   dbRender();
 }
 
@@ -1615,14 +1626,16 @@ function dbRHist(b) {
 function dbRScatter(b) {
   const pts=b.filter(x=>x.duration&&x.yield).map(x=>({x:x.duration,y:x.yield,issuer:x.issuer,spread:x.spread,cal:x.cal_rating,rb:dbRb(x)}));
   if(sC) sC.destroy();
-  sC=new Chart(document.getElementById('cs'),{type:'scatter',data:{datasets:[{data:pts,backgroundColor:pts.map(p=>(cM[p.rb]||'#64748b')+'99'),borderColor:pts.map(p=>cM[p.rb]||'#64748b'),borderWidth:1,pointRadius:4,pointHoverRadius:7}]},options:{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>`${c.raw.issuer}\nYield: ${c.raw.y.toFixed(2)}%  Dur: ${c.raw.x.toFixed(1)}y\nSpread: ${c.raw.spread!=null?Math.round(c.raw.spread*100)+' bps':'N/D'}  [${c.raw.rb}]`},backgroundColor:'#0e1018',borderColor:'#1c2035',borderWidth:1,bodyFont:{family:'DM Mono',size:11}}},scales:{x:{title:{display:true,text:'Duración (años)',color:'#545d75',font:{family:'DM Mono',size:9}},ticks:{color:'#545d75',font:{family:'DM Mono',size:9}},grid:{color:'#1c2035'}},y:{title:{display:true,text:'Yield (%)',color:'#545d75',font:{family:'DM Mono',size:9}},ticks:{color:'#545d75',font:{family:'DM Mono',size:9}},grid:{color:'#1c2035'}}}}});
+  sC=new Chart(document.getElementById('cs'),{type:'scatter',data:{datasets:[{data:pts,backgroundColor:pts.map(p=>(cM(p.rb)||'#64748b')+'99'),borderColor:pts.map(p=>cM(p.rb)||'#64748b'),borderWidth:1,pointRadius:4,pointHoverRadius:7}]},options:{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>`${c.raw.issuer}\nYield: ${c.raw.y.toFixed(2)}%  Dur: ${c.raw.x.toFixed(1)}y\nSpread: ${c.raw.spread!=null?Math.round(c.raw.spread*100)+' bps':'N/D'}  [${c.raw.rb}]`},backgroundColor:'#0e1018',borderColor:'#1c2035',borderWidth:1,bodyFont:{family:'DM Mono',size:11}}},scales:{x:{title:{display:true,text:'Duración (años)',color:'#545d75',font:{family:'DM Mono',size:9}},ticks:{color:'#545d75',font:{family:'DM Mono',size:9}},grid:{color:'#1c2035'}},y:{title:{display:true,text:'Yield (%)',color:'#545d75',font:{family:'DM Mono',size:9}},ticks:{color:'#545d75',font:{family:'DM Mono',size:9}},grid:{color:'#1c2035'}}}}});
 }
 
 let dbHmBonds=[];
 function dbRHeatmap(b) {
   dbHmBonds=b;
-  const RS=['AAA','AA','A','BBB','BB','B','CCC','NR'],TS=['0-3a','3-7a','7-15a','15+a'],g={};
+  const TS=['0-3a','3-7a','7-15a','15+a'],g={};
   b.forEach(x=>{const k=dbRb(x)+'|'+x.t_bucket;if(!g[k])g[k]=[];g[k].push(x);});
+  const allR=dbCurOrder().filter(r=>TS.some(t=>g[r+'|'+t]&&g[r+'|'+t].length));
+  const RS=allR.length?allR:dbCurOrder();
   const avs=Object.values(g).map(v=>dbAvg(v.map(x=>x.yield))).filter(Boolean);
   const mn=Math.min(...avs),mx=Math.max(...avs);
   function cc(y){if(!y)return'transparent';const t=(y-mn)/(mx-mn||1);return`rgba(${Math.round(10+t*245)},${Math.round(180-t*100)},${Math.round(210-t*200)},0.75)`;}
@@ -1650,9 +1663,9 @@ function dbShowHmDetail(r,t) {
 function dbRCurve(b) {
   const xPts=[1,2,3,5,7,10,15,20,30];
   const tsyData=xPts.map(x=>({x,y:+tsyYield(x).toFixed(3)}));
-  const ratingGroups=['AAA','AA','A','BBB','BB','B','CCC'];
-  const ratingColors=['#00ff88','#7cfc00','#00d4ff','#ffd700','#ff9f40','#ff6b35','#ff4444'];
-  const ratingDatasets=ratingGroups.map((r,i)=>{
+  const ratingGroups=dbCurOrder().filter(r=>r!=='NR'&&b.some(x=>dbRb(x)===r&&x.years));
+  const ratingDatasets=ratingGroups.map((r)=>{
+    const col=cM(r)||'#64748b';
     const bondsR=b.filter(x=>dbRb(x)===r&&x.years);
     if(!bondsR.length) return null;
     const pts=xPts.map(xp=>{
@@ -1662,7 +1675,7 @@ function dbRCurve(b) {
       return{x:xp,y:+dbAvg(near.map(x=>x.yield)).toFixed(3)};
     }).filter(Boolean);
     if(pts.length<2) return null;
-    return{label:r,data:pts,borderColor:ratingColors[i],backgroundColor:ratingColors[i]+'22',tension:.4,pointRadius:5,fill:false,borderWidth:2};
+    return{label:r,data:pts,borderColor:col,backgroundColor:col+'22',tension:.4,pointRadius:5,fill:false,borderWidth:2};
   }).filter(Boolean);
   const tsyDs={label:'US Treasury',data:tsyData,borderColor:'#ffffff',backgroundColor:'#ffffff22',tension:.4,pointRadius:4,fill:false,borderWidth:2,borderDash:[6,3]};
   if(curveC) curveC.destroy();
@@ -1699,6 +1712,7 @@ function loadBondsFromAPI(data) {
   const fsel=document.getElementById('fs');
   fsel.innerHTML='<option value="">Todos</option>';
   sectors.forEach(s=>{const o=document.createElement('option');o.value=o.textContent=s;fsel.appendChild(o);});
+  dbRebuildRatingFilter();
   window.DB_LOADED = true;
   dbRender();
 }

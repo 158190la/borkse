@@ -224,17 +224,51 @@ def process_bonds(bonds, tsy):
                 t_bucket = "N/D"
 
             # Calificacion: columna de la calificadora de riesgo (S&P/Moody's/Fitch)
+            # Normaliza a notación S&P con modificadores (+/-) para granularidad fina
             cal_raw = (b.get("Calificacion") or "NR").strip()
             if cal_raw in ("Cargando...", "#N/A", "#REF!", ""): cal_raw = "NR"
-            cal_u = cal_raw.upper()
-            if   "AAA" in cal_u: cal_bucket = "AAA"
-            elif "AA"  in cal_u: cal_bucket = "AA"
-            elif "BBB" in cal_u: cal_bucket = "BBB"
-            elif "BB"  in cal_u: cal_bucket = "BB"
-            elif "CCC" in cal_u: cal_bucket = "CCC"
-            elif "A"   in cal_u: cal_bucket = "A"
-            elif "B"   in cal_u: cal_bucket = "B"
-            else:                cal_bucket = "NR"
+            _MOODY = {
+                "AAA":"AAA","AAA":"AAA",
+                "AA1":"AA+","Aa1":"AA+","AA2":"AA","Aa2":"AA","AA3":"AA-","Aa3":"AA-",
+                "A1":"A+","A2":"A","A3":"A-",
+                "BAA1":"BBB+","Baa1":"BBB+","BAA2":"BBB","Baa2":"BBB","BAA3":"BBB-","Baa3":"BBB-",
+                "BA1":"BB+","Ba1":"BB+","BA2":"BB","Ba2":"BB","BA3":"BB-","Ba3":"BB-",
+                "B1":"B+","B2":"B","B3":"B-",
+                "CAA1":"CCC+","Caa1":"CCC+","CAA2":"CCC","Caa2":"CCC","CAA3":"CCC-","Caa3":"CCC-",
+                "CA":"CC","C":"C","D":"D",
+            }
+            _SP = ["AAA","AA+","AA","AA-","A+","A","A-","BBB+","BBB","BBB-",
+                   "BB+","BB","BB-","B+","B","B-","CCC+","CCC","CCC-","CC","C","D"]
+            def _norm_cal(r):
+                if not r or r.upper() in ("NR","N/R",""):  return "NR"
+                u = r.strip().upper()
+                if u in _MOODY:  return _MOODY[u]
+                for s in _SP:
+                    if s.upper() == u: return s
+                # partial fallback (handles variants like "AA (stable)")
+                if   "AAA" in u:                      return "AAA"
+                elif "AA+" in u or u.startswith("AA1"): return "AA+"
+                elif "AA-" in u or u.startswith("AA3"): return "AA-"
+                elif "AA"  in u:                      return "AA"
+                elif "BBB+"in u or "BAA1" in u:       return "BBB+"
+                elif "BBB-"in u or "BAA3" in u:       return "BBB-"
+                elif "BBB" in u or "BAA"  in u:       return "BBB"
+                elif "BB+" in u or "BA1"  in u:       return "BB+"
+                elif "BB-" in u or "BA3"  in u:       return "BB-"
+                elif "BB"  in u or "BA"   in u:       return "BB"
+                elif "A+"  in u or u.startswith("A1"): return "A+"
+                elif "A-"  in u or u.startswith("A3"): return "A-"
+                elif "A"   in u:                      return "A"
+                elif "B+"  in u or u.startswith("B1"): return "B+"
+                elif "B-"  in u or u.startswith("B3"): return "B-"
+                elif "B"   in u:                      return "B"
+                elif "CCC+"in u or "CAA1" in u:       return "CCC+"
+                elif "CCC-"in u or "CAA3" in u:       return "CCC-"
+                elif "CCC" in u or "CAA"  in u:       return "CCC"
+                elif "CC"  in u or "CA"   in u:       return "CC"
+                elif "D"   in u:                      return "D"
+                return "NR"
+            cal_bucket = _norm_cal(cal_raw)
 
             processed.append({
                 "name":       name,
@@ -333,7 +367,7 @@ canvas{max-height:280px}
 </header>
 <div class="filters">
   <span class="fl">Rating:</span>
-  <select id="fr" onchange="render()"><option value="">Todos</option><option>AAA</option><option>AA</option><option>A</option><option>BBB</option><option>BB</option><option>B</option><option>CCC</option><option>NR</option></select>
+  <select id="fr" onchange="render()"><option value="">Todos</option></select>
   <span class="fl">Plazo:</span>
   <select id="ft" onchange="render()"><option value="">Todos</option><option>0-3a</option><option>3-7a</option><option>7-15a</option><option>15+a</option></select>
   <span class="fl">Sector:</span>
@@ -395,14 +429,29 @@ const TSY_RAW=__TSY__;
 let hC=null,sC=null,curveC=null,sc='ya',sa=false,iD=[];
 let useLD=false;
 const avg=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:null;
-const cM={'AAA':'#00ff88','AA':'#7cfc00','A':'#00d4ff','BBB':'#ffd700','BB':'#ff9f40','B':'#ff6b35','CCC':'#ff4444','NR':'#64748b'};
+// Rating LD: escala simplificada (7 buckets)
+const LD_ORDER=['AAA','AA','A','BBB','BB','B','CCC','NR'];
+const LD_COLORS={'AAA':'#00ff88','AA':'#7cfc00','A':'#00d4ff','BBB':'#ffd700','BB':'#ff9f40','B':'#ff6b35','CCC':'#ff4444','NR':'#64748b'};
+// Calificacion: escala S&P completa con modificadores
+const CAL_ORDER=['AAA','AA+','AA','AA-','A+','A','A-','BBB+','BBB','BBB-','BB+','BB','BB-','B+','B','B-','CCC+','CCC','CCC-','CC','C','D','NR'];
+const CAL_COLORS={'AAA':'#00ff88','AA+':'#44ff99','AA':'#7cfc00','AA-':'#a0e000','A+':'#c8d400','A':'#00d4ff','A-':'#00bcd4','BBB+':'#ffe800','BBB':'#ffd700','BBB-':'#ffc000','BB+':'#ffb040','BB':'#ff9f40','BB-':'#ff8840','B+':'#ff7838','B':'#ff6b35','B-':'#ff5028','CCC+':'#ff5050','CCC':'#ff4444','CCC-':'#e03030','CC':'#cc2222','C':'#aa1111','D':'#880000','NR':'#64748b'};
+function cM(bucket){return useLD?CAL_COLORS[bucket]:LD_COLORS[bucket];}
+function curOrder(){return useLD?CAL_ORDER:LD_ORDER;}
 function rb(b){return useLD?b.cal_bucket:b.r_bucket;}
+function rebuildRatingFilter(){
+  const sel=document.getElementById('fr');
+  const prev=sel.value;
+  sel.innerHTML='<option value="">Todos</option>';
+  curOrder().forEach(r=>{const o=document.createElement('option');o.value=o.textContent=r;sel.appendChild(o);});
+  sel.value=curOrder().includes(prev)?prev:'';
+}
 function toggleLD(on){
   useLD=on;
   document.getElementById('lbl-cal').classList.toggle('active',!on);
   document.getElementById('lbl-ld').classList.toggle('active',on);
   document.getElementById('scatter-title').textContent=on?'Yield vs Duracion — por Calificacion':'Yield vs Duracion — por Rating LD';
   document.getElementById('heatmap-title').textContent=on?'Mapa de Calor — Yield avg por Calificacion x Plazo':'Mapa de Calor — Yield avg por Rating LD x Plazo';
+  rebuildRatingFilter();
   render();
 }
 
@@ -422,6 +471,7 @@ function tsyYield(y){
 const sectors=[...new Set(B.map(b=>b.sector).filter(Boolean))].sort();
 const fsel=document.getElementById('fs');
 sectors.forEach(s=>{const o=document.createElement('option');o.value=o.textContent=s;fsel.appendChild(o);});
+rebuildRatingFilter();
 
 function filt(){
   const r=document.getElementById('fr').value,t=document.getElementById('ft').value;
@@ -458,15 +508,18 @@ function rHist(b){
 function rScatter(b){
   const pts=b.filter(x=>x.duration&&x.yield).map(x=>({x:x.duration,y:x.yield,issuer:x.issuer,spread:x.spread,cal:x.cal_rating,rb:rb(x)}));
   if(sC)sC.destroy();
-  sC=new Chart(document.getElementById('cs'),{type:'scatter',data:{datasets:[{data:pts,backgroundColor:pts.map(p=>(cM[p.rb]||'#64748b')+'99'),borderColor:pts.map(p=>cM[p.rb]||'#64748b'),borderWidth:1,pointRadius:4,pointHoverRadius:7}]},options:{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>`${c.raw.issuer}\nYield: ${c.raw.y.toFixed(2)}%  Dur: ${c.raw.x.toFixed(1)}y\nSpread: ${c.raw.spread!=null?Math.round(c.raw.spread*100)+' bps':'N/D'}  [${useLD&&c.raw.cal?c.raw.cal:c.raw.rb}]`},backgroundColor:'#111827',borderColor:'#1e2d45',borderWidth:1,bodyFont:{family:'IBM Plex Mono',size:11}}},scales:{x:{title:{display:true,text:'Duracion estimada (anos)',color:'#64748b',font:{family:'IBM Plex Mono',size:9}},ticks:{color:'#64748b',font:{family:'IBM Plex Mono',size:9}},grid:{color:'#1e2d45'}},y:{title:{display:true,text:'Yield (%)',color:'#64748b',font:{family:'IBM Plex Mono',size:9}},ticks:{color:'#64748b',font:{family:'IBM Plex Mono',size:9}},grid:{color:'#1e2d45'}}}}});
+  sC=new Chart(document.getElementById('cs'),{type:'scatter',data:{datasets:[{data:pts,backgroundColor:pts.map(p=>(cM(p.rb)||'#64748b')+'99'),borderColor:pts.map(p=>cM(p.rb)||'#64748b'),borderWidth:1,pointRadius:4,pointHoverRadius:7}]},options:{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>`${c.raw.issuer}\nYield: ${c.raw.y.toFixed(2)}%  Dur: ${c.raw.x.toFixed(1)}y\nSpread: ${c.raw.spread!=null?Math.round(c.raw.spread*100)+' bps':'N/D'}  [${useLD&&c.raw.cal?c.raw.cal:c.raw.rb}]`},backgroundColor:'#111827',borderColor:'#1e2d45',borderWidth:1,bodyFont:{family:'IBM Plex Mono',size:11}}},scales:{x:{title:{display:true,text:'Duracion estimada (anos)',color:'#64748b',font:{family:'IBM Plex Mono',size:9}},ticks:{color:'#64748b',font:{family:'IBM Plex Mono',size:9}},grid:{color:'#1e2d45'}},y:{title:{display:true,text:'Yield (%)',color:'#64748b',font:{family:'IBM Plex Mono',size:9}},ticks:{color:'#64748b',font:{family:'IBM Plex Mono',size:9}},grid:{color:'#1e2d45'}}}}});
 }
 
 
 let hmBonds=[];
 function rHeatmap(b){
   hmBonds=b;
-  const RS=['AAA','AA','A','BBB','BB','B','CCC','NR'],TS=['0-3a','3-7a','7-15a','15+a'],g={};
+  const TS=['0-3a','3-7a','7-15a','15+a'],g={};
   b.forEach(x=>{const k=rb(x)+'|'+x.t_bucket;if(!g[k])g[k]=[];g[k].push(x);});
+  // Solo mostrar filas que tienen datos, en el orden de la escala activa
+  const allR=curOrder().filter(r=>TS.some(t=>g[r+'|'+t]&&g[r+'|'+t].length));
+  const RS=allR.length?allR:curOrder();
   const avs=Object.values(g).map(v=>avg(v.map(x=>x.yield))).filter(Boolean);
   const mn=Math.min(...avs),mx=Math.max(...avs);
   function cc(y){if(!y)return'transparent';const t=(y-mn)/(mx-mn||1);return`rgba(${Math.round(10+t*245)},${Math.round(180-t*100)},${Math.round(210-t*200)},0.75)`;}
@@ -502,9 +555,10 @@ function showHmDetail(r,t){
 function rCurve(b){
   const xPts=[1,2,3,5,7,10,15,20,30];
   const tsyData=xPts.map(x=>({x,y:+tsyYield(x).toFixed(3)}));
-  const ratingGroups=['AAA','AA','A','BBB','BB','B','CCC'];
-  const ratingColors=['#00ff88','#7cfc00','#00d4ff','#ffd700','#ff9f40','#ff6b35','#ff4444'];
-  const ratingDatasets=ratingGroups.map((r,i)=>{
+  // Grupos con datos en la escala activa (excluir NR)
+  const ratingGroups=curOrder().filter(r=>r!=='NR'&&b.some(x=>rb(x)===r&&x.years));
+  const ratingDatasets=ratingGroups.map((r)=>{
+    const col=cM(r)||'#64748b';
     const bondsR=b.filter(x=>rb(x)===r&&x.years);
     if(!bondsR.length)return null;
     const pts=xPts.map(xp=>{
@@ -514,7 +568,7 @@ function rCurve(b){
       return{x:xp,y:+avg(near.map(x=>x.yield)).toFixed(3)};
     }).filter(Boolean);
     if(pts.length<2)return null;
-    return{label:r,data:pts,borderColor:ratingColors[i],backgroundColor:ratingColors[i]+'22',
+    return{label:r,data:pts,borderColor:col,backgroundColor:col+'22',
       tension:.4,pointRadius:5,pointHoverRadius:8,fill:false,borderWidth:2};
   }).filter(Boolean);
   const tsyDs={label:'US Treasury',data:tsyData,borderColor:'#ffffff',backgroundColor:'#ffffff22',
