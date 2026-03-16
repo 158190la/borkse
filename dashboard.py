@@ -223,27 +223,40 @@ def process_bonds(bonds, tsy):
             else:
                 t_bucket = "N/D"
 
+            score_val = to_float(b.get("FinalLDScore"))
+            def _score_bucket(s):
+                if s is None:  return "NR"
+                if s >= 8.0:   return "AAA"
+                if s >= 6.5:   return "AA"
+                if s >= 5.0:   return "A"
+                if s >= 3.5:   return "BBB"
+                if s >= 2.0:   return "BB"
+                if s >= 0.8:   return "B"
+                if s >  0:     return "CCC"
+                return "NR"
+
             processed.append({
-                "name":       name,
-                "issuer":     issuer,
-                "isin":       b.get("isin",""),
-                "ticker":     b.get("Ticker",""),
-                "sector":     (b.get("sector") or "").strip(),
-                "yield":      round(y, 3),
-                "coupon":     coupon,
-                "duration":   dur,
-                "years":      round(years,1) if years else None,
-                "maturity":   b.get("año vencimiento",""),
-                "spread":     spread,
-                "price":      to_float(b.get("lastQuote") or b.get("overview.lastPrice")),
-                "rating":     rating,
-                "r_bucket":   r_bucket,
-                "t_bucket":   t_bucket,
-                "perf1y":     to_float(b.get("performance1Year") or b.get("performance.performance1Year")),
-                "structural": to_float(b.get("StructuralScore")),
-                "stability":  to_float(b.get("StabilityScore")),
-                "trend":      to_float(b.get("TrendScore")),
-                "score":      to_float(b.get("FinalLDScore")),
+                "name":         name,
+                "issuer":       issuer,
+                "isin":         b.get("isin",""),
+                "ticker":       b.get("Ticker",""),
+                "sector":       (b.get("sector") or "").strip(),
+                "yield":        round(y, 3),
+                "coupon":       coupon,
+                "duration":     dur,
+                "years":        round(years,1) if years else None,
+                "maturity":     b.get("año vencimiento",""),
+                "spread":       spread,
+                "price":        to_float(b.get("lastQuote") or b.get("overview.lastPrice")),
+                "rating":       rating,
+                "r_bucket":     r_bucket,
+                "score_bucket": _score_bucket(score_val),
+                "t_bucket":     t_bucket,
+                "perf1y":       to_float(b.get("performance1Year") or b.get("performance.performance1Year")),
+                "structural":   to_float(b.get("StructuralScore")),
+                "stability":    to_float(b.get("StabilityScore")),
+                "trend":        to_float(b.get("TrendScore")),
+                "score":        score_val,
             })
         except:
             continue
@@ -271,6 +284,15 @@ header{border-bottom:1px solid var(--bdr);padding:16px 28px;display:flex;align-i
 h1{font-family:var(--mono);font-size:13px;font-weight:600;color:var(--acc);letter-spacing:.08em;text-transform:uppercase}
 .meta{font-family:var(--mono);font-size:11px;color:var(--mut)}
 .filters{display:flex;gap:10px;padding:10px 28px;background:var(--surf);border-bottom:1px solid var(--bdr);align-items:center;flex-wrap:wrap}
+.toggle-wrap{display:flex;align-items:center;gap:7px;margin-left:auto}
+.toggle-lbl{font-family:var(--mono);font-size:9px;color:var(--mut);text-transform:uppercase;letter-spacing:.08em;white-space:nowrap}
+.toggle-lbl.active{color:var(--acc)}
+.toggle{position:relative;display:inline-block;width:36px;height:18px}
+.toggle input{opacity:0;width:0;height:0}
+.toggle-slider{position:absolute;cursor:pointer;inset:0;background:#1e2d45;border-radius:18px;transition:.2s}
+.toggle-slider:before{content:'';position:absolute;width:12px;height:12px;left:3px;bottom:3px;background:var(--mut);border-radius:50%;transition:.2s}
+input:checked+.toggle-slider{background:#0d2a3a}
+input:checked+.toggle-slider:before{transform:translateX(18px);background:var(--acc)}
 .fl{font-family:var(--mono);font-size:9px;color:var(--mut);text-transform:uppercase;letter-spacing:.08em}
 select{background:var(--bg);color:var(--txt);border:1px solid var(--bdr);padding:4px 8px;font-family:var(--mono);font-size:11px;border-radius:3px;cursor:pointer}
 select:focus{outline:1px solid var(--acc)}
@@ -318,6 +340,11 @@ canvas{max-height:280px}
   <select id="fy" onchange="render()"><option value="">-</option><option value="3">3%+</option><option value="4">4%+</option><option value="5">5%+</option><option value="6">6%+</option></select>
   <span class="fl">Spread min:</span>
   <select id="fsp" onchange="render()"><option value="">-</option><option value="100">100+ bps</option><option value="200">200+ bps</option><option value="300">300+ bps</option></select>
+  <div class="toggle-wrap">
+    <span class="toggle-lbl active" id="lbl-cal">Calificación</span>
+    <label class="toggle"><input type="checkbox" id="tog-ld" onchange="toggleLD(this.checked)"><span class="toggle-slider"></span></label>
+    <span class="toggle-lbl" id="lbl-ld">Score LD</span>
+  </div>
 </div>
 <div class="kpis">
   <div class="kpi"><div class="kl">Bonos</div><div class="kv" id="k1">-</div><div class="ks">en pantalla</div></div>
@@ -329,8 +356,8 @@ canvas{max-height:280px}
 </div>
 <div class="grid">
   <div class="panel"><div class="pt">Histograma de Yields</div><canvas id="ch"></canvas></div>
-  <div class="panel"><div class="pt">Yield vs Duracion — por Rating</div><canvas id="cs"></canvas></div>
-  <div class="panel"><div class="pt">Mapa de Calor — Yield avg por Rating x Plazo</div><div id="hm"></div></div>
+  <div class="panel"><div class="pt" id="scatter-title">Yield vs Duracion — por Rating</div><canvas id="cs"></canvas></div>
+  <div class="panel"><div class="pt" id="heatmap-title">Mapa de Calor — Yield avg por Rating x Plazo</div><div id="hm"></div></div>
   <div class="panel" id="hm-detail-panel">
     <div class="pt">Bonos del cuadrante <span id="hm-detail-title" style="color:var(--acc);font-weight:400;margin-left:6px;font-size:9px"></span></div>
     <div id="hm-detail-empty" style="color:var(--mut);font-family:var(--mono);font-size:11px;padding:20px 0">← Click en un cuadrante del mapa</div>
@@ -364,8 +391,18 @@ canvas{max-height:280px}
 const B=__BONDS__;
 const TSY_RAW=__TSY__;
 let hC=null,sC=null,curveC=null,sc='ya',sa=false,iD=[];
+let useLD=false;
 const avg=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:null;
 const cM={'AAA':'#00ff88','AA':'#7cfc00','A':'#00d4ff','BBB':'#ffd700','BB':'#ff9f40','B':'#ff6b35','CCC':'#ff4444','NR':'#64748b'};
+function rb(b){return useLD?b.score_bucket:b.r_bucket;}
+function toggleLD(on){
+  useLD=on;
+  document.getElementById('lbl-cal').classList.toggle('active',!on);
+  document.getElementById('lbl-ld').classList.toggle('active',on);
+  document.getElementById('scatter-title').textContent=on?'Yield vs Duracion — por Score LD':'Yield vs Duracion — por Rating';
+  document.getElementById('heatmap-title').textContent=on?'Mapa de Calor — Yield avg por Score LD x Plazo':'Mapa de Calor — Yield avg por Rating x Plazo';
+  render();
+}
 
 // Interpolar treasury para cualquier plazo
 function tsyYield(y){
@@ -388,7 +425,7 @@ function filt(){
   const r=document.getElementById('fr').value,t=document.getElementById('ft').value;
   const s=document.getElementById('fs').value,y=parseFloat(document.getElementById('fy').value)||0;
   const sp=parseFloat(document.getElementById('fsp').value)||0;
-  return B.filter(b=>(!r||b.r_bucket===r)&&(!t||b.t_bucket===t)&&(!s||b.sector===s)&&b.yield>=y&&(sp===0||b.spread==null||(b.spread*100)>=sp));
+  return B.filter(b=>(!r||rb(b)===r)&&(!t||b.t_bucket===t)&&(!s||b.sector===s)&&b.yield>=y&&(sp===0||b.spread==null||(b.spread*100)>=sp));
 }
 
 function render(){
@@ -417,9 +454,9 @@ function rHist(b){
 }
 
 function rScatter(b){
-  const pts=b.filter(x=>x.duration&&x.yield).map(x=>({x:x.duration,y:x.yield,issuer:x.issuer,spread:x.spread,rb:x.r_bucket}));
+  const pts=b.filter(x=>x.duration&&x.yield).map(x=>({x:x.duration,y:x.yield,issuer:x.issuer,spread:x.spread,score:x.score,rb:rb(x)}));
   if(sC)sC.destroy();
-  sC=new Chart(document.getElementById('cs'),{type:'scatter',data:{datasets:[{data:pts,backgroundColor:pts.map(p=>(cM[p.rb]||'#64748b')+'99'),borderColor:pts.map(p=>cM[p.rb]||'#64748b'),borderWidth:1,pointRadius:4,pointHoverRadius:7}]},options:{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>`${c.raw.issuer}\nYield: ${c.raw.y.toFixed(2)}%  Dur: ${c.raw.x.toFixed(1)}y\nSpread: ${c.raw.spread!=null?Math.round(c.raw.spread*100)+' bps':'N/D'}  [${c.raw.rb}]`},backgroundColor:'#111827',borderColor:'#1e2d45',borderWidth:1,bodyFont:{family:'IBM Plex Mono',size:11}}},scales:{x:{title:{display:true,text:'Duracion estimada (anos)',color:'#64748b',font:{family:'IBM Plex Mono',size:9}},ticks:{color:'#64748b',font:{family:'IBM Plex Mono',size:9}},grid:{color:'#1e2d45'}},y:{title:{display:true,text:'Yield (%)',color:'#64748b',font:{family:'IBM Plex Mono',size:9}},ticks:{color:'#64748b',font:{family:'IBM Plex Mono',size:9}},grid:{color:'#1e2d45'}}}}});
+  sC=new Chart(document.getElementById('cs'),{type:'scatter',data:{datasets:[{data:pts,backgroundColor:pts.map(p=>(cM[p.rb]||'#64748b')+'99'),borderColor:pts.map(p=>cM[p.rb]||'#64748b'),borderWidth:1,pointRadius:4,pointHoverRadius:7}]},options:{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>`${c.raw.issuer}\nYield: ${c.raw.y.toFixed(2)}%  Dur: ${c.raw.x.toFixed(1)}y\nSpread: ${c.raw.spread!=null?Math.round(c.raw.spread*100)+' bps':'N/D'}  [${useLD&&c.raw.score!=null?'Score:'+c.raw.score.toFixed(1)+' →':''} ${c.raw.rb}]`},backgroundColor:'#111827',borderColor:'#1e2d45',borderWidth:1,bodyFont:{family:'IBM Plex Mono',size:11}}},scales:{x:{title:{display:true,text:'Duracion estimada (anos)',color:'#64748b',font:{family:'IBM Plex Mono',size:9}},ticks:{color:'#64748b',font:{family:'IBM Plex Mono',size:9}},grid:{color:'#1e2d45'}},y:{title:{display:true,text:'Yield (%)',color:'#64748b',font:{family:'IBM Plex Mono',size:9}},ticks:{color:'#64748b',font:{family:'IBM Plex Mono',size:9}},grid:{color:'#1e2d45'}}}}});
 }
 
 
@@ -427,7 +464,7 @@ let hmBonds=[];
 function rHeatmap(b){
   hmBonds=b;
   const RS=['AAA','AA','A','BBB','BB','B','CCC','NR'],TS=['0-3a','3-7a','7-15a','15+a'],g={};
-  b.forEach(x=>{const k=x.r_bucket+'|'+x.t_bucket;if(!g[k])g[k]=[];g[k].push(x);});
+  b.forEach(x=>{const k=rb(x)+'|'+x.t_bucket;if(!g[k])g[k]=[];g[k].push(x);});
   const avs=Object.values(g).map(v=>avg(v.map(x=>x.yield))).filter(Boolean);
   const mn=Math.min(...avs),mx=Math.max(...avs);
   function cc(y){if(!y)return'transparent';const t=(y-mn)/(mx-mn||1);return`rgba(${Math.round(10+t*245)},${Math.round(180-t*100)},${Math.round(210-t*200)},0.75)`;}
@@ -447,7 +484,7 @@ function rHeatmap(b){
 }
 
 function showHmDetail(r,t){
-  const bonds=hmBonds.filter(x=>x.r_bucket===r&&x.t_bucket===t);
+  const bonds=hmBonds.filter(x=>rb(x)===r&&x.t_bucket===t);
   bonds.sort((a,b)=>b.yield-a.yield);
   document.getElementById('hm-detail-title').textContent=`${r} · ${t} — ${bonds.length} bonos`;
   document.getElementById('hm-detail-body').innerHTML=bonds.map(b=>`
@@ -466,7 +503,7 @@ function rCurve(b){
   const ratingGroups=['AAA','AA','A','BBB','BB','B','CCC'];
   const ratingColors=['#00ff88','#7cfc00','#00d4ff','#ffd700','#ff9f40','#ff6b35','#ff4444'];
   const ratingDatasets=ratingGroups.map((r,i)=>{
-    const bondsR=b.filter(x=>x.r_bucket===r&&x.years);
+    const bondsR=b.filter(x=>rb(x)===r&&x.years);
     if(!bondsR.length)return null;
     const pts=xPts.map(xp=>{
       const window=xp<=3?1.5:xp<=7?2:3;
