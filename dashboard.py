@@ -223,40 +223,42 @@ def process_bonds(bonds, tsy):
             else:
                 t_bucket = "N/D"
 
-            score_val = to_float(b.get("FinalLDScore"))
-            def _score_bucket(s):
-                if s is None:  return "NR"
-                if s >= 8.0:   return "AAA"
-                if s >= 6.5:   return "AA"
-                if s >= 5.0:   return "A"
-                if s >= 3.5:   return "BBB"
-                if s >= 2.0:   return "BB"
-                if s >= 0.8:   return "B"
-                if s >  0:     return "CCC"
-                return "NR"
+            # Calificacion: columna de la calificadora de riesgo (S&P/Moody's/Fitch)
+            cal_raw = (b.get("Calificacion") or "NR").strip()
+            if cal_raw in ("Cargando...", "#N/A", "#REF!", ""): cal_raw = "NR"
+            cal_u = cal_raw.upper()
+            if   "AAA" in cal_u: cal_bucket = "AAA"
+            elif "AA"  in cal_u: cal_bucket = "AA"
+            elif "BBB" in cal_u: cal_bucket = "BBB"
+            elif "BB"  in cal_u: cal_bucket = "BB"
+            elif "CCC" in cal_u: cal_bucket = "CCC"
+            elif "A"   in cal_u: cal_bucket = "A"
+            elif "B"   in cal_u: cal_bucket = "B"
+            else:                cal_bucket = "NR"
 
             processed.append({
-                "name":         name,
-                "issuer":       issuer,
-                "isin":         b.get("isin",""),
-                "ticker":       b.get("Ticker",""),
-                "sector":       (b.get("sector") or "").strip(),
-                "yield":        round(y, 3),
-                "coupon":       coupon,
-                "duration":     dur,
-                "years":        round(years,1) if years else None,
-                "maturity":     b.get("año vencimiento",""),
-                "spread":       spread,
-                "price":        to_float(b.get("lastQuote") or b.get("overview.lastPrice")),
-                "rating":       rating,
-                "r_bucket":     r_bucket,
-                "score_bucket": _score_bucket(score_val),
-                "t_bucket":     t_bucket,
-                "perf1y":       to_float(b.get("performance1Year") or b.get("performance.performance1Year")),
-                "structural":   to_float(b.get("StructuralScore")),
-                "stability":    to_float(b.get("StabilityScore")),
-                "trend":        to_float(b.get("TrendScore")),
-                "score":        score_val,
+                "name":       name,
+                "issuer":     issuer,
+                "isin":       b.get("isin",""),
+                "ticker":     b.get("Ticker",""),
+                "sector":     (b.get("sector") or "").strip(),
+                "yield":      round(y, 3),
+                "coupon":     coupon,
+                "duration":   dur,
+                "years":      round(years,1) if years else None,
+                "maturity":   b.get("año vencimiento",""),
+                "spread":     spread,
+                "price":      to_float(b.get("lastQuote") or b.get("overview.lastPrice")),
+                "rating":     rating,
+                "r_bucket":   r_bucket,
+                "cal_rating": cal_raw,
+                "cal_bucket": cal_bucket,
+                "t_bucket":   t_bucket,
+                "perf1y":     to_float(b.get("performance1Year") or b.get("performance.performance1Year")),
+                "structural": to_float(b.get("StructuralScore")),
+                "stability":  to_float(b.get("StabilityScore")),
+                "trend":      to_float(b.get("TrendScore")),
+                "score":      to_float(b.get("FinalLDScore")),
             })
         except:
             continue
@@ -341,9 +343,9 @@ canvas{max-height:280px}
   <span class="fl">Spread min:</span>
   <select id="fsp" onchange="render()"><option value="">-</option><option value="100">100+ bps</option><option value="200">200+ bps</option><option value="300">300+ bps</option></select>
   <div class="toggle-wrap">
-    <span class="toggle-lbl active" id="lbl-cal">Calificación</span>
+    <span class="toggle-lbl active" id="lbl-cal">Rating LD</span>
     <label class="toggle"><input type="checkbox" id="tog-ld" onchange="toggleLD(this.checked)"><span class="toggle-slider"></span></label>
-    <span class="toggle-lbl" id="lbl-ld">Score LD</span>
+    <span class="toggle-lbl" id="lbl-ld">Calificación</span>
   </div>
 </div>
 <div class="kpis">
@@ -356,8 +358,8 @@ canvas{max-height:280px}
 </div>
 <div class="grid">
   <div class="panel"><div class="pt">Histograma de Yields</div><canvas id="ch"></canvas></div>
-  <div class="panel"><div class="pt" id="scatter-title">Yield vs Duracion — por Rating</div><canvas id="cs"></canvas></div>
-  <div class="panel"><div class="pt" id="heatmap-title">Mapa de Calor — Yield avg por Rating x Plazo</div><div id="hm"></div></div>
+  <div class="panel"><div class="pt" id="scatter-title">Yield vs Duracion — por Rating LD</div><canvas id="cs"></canvas></div>
+  <div class="panel"><div class="pt" id="heatmap-title">Mapa de Calor — Yield avg por Rating LD x Plazo</div><div id="hm"></div></div>
   <div class="panel" id="hm-detail-panel">
     <div class="pt">Bonos del cuadrante <span id="hm-detail-title" style="color:var(--acc);font-weight:400;margin-left:6px;font-size:9px"></span></div>
     <div id="hm-detail-empty" style="color:var(--mut);font-family:var(--mono);font-size:11px;padding:20px 0">← Click en un cuadrante del mapa</div>
@@ -394,13 +396,13 @@ let hC=null,sC=null,curveC=null,sc='ya',sa=false,iD=[];
 let useLD=false;
 const avg=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:null;
 const cM={'AAA':'#00ff88','AA':'#7cfc00','A':'#00d4ff','BBB':'#ffd700','BB':'#ff9f40','B':'#ff6b35','CCC':'#ff4444','NR':'#64748b'};
-function rb(b){return useLD?b.score_bucket:b.r_bucket;}
+function rb(b){return useLD?b.cal_bucket:b.r_bucket;}
 function toggleLD(on){
   useLD=on;
   document.getElementById('lbl-cal').classList.toggle('active',!on);
   document.getElementById('lbl-ld').classList.toggle('active',on);
-  document.getElementById('scatter-title').textContent=on?'Yield vs Duracion — por Score LD':'Yield vs Duracion — por Rating';
-  document.getElementById('heatmap-title').textContent=on?'Mapa de Calor — Yield avg por Score LD x Plazo':'Mapa de Calor — Yield avg por Rating x Plazo';
+  document.getElementById('scatter-title').textContent=on?'Yield vs Duracion — por Calificacion':'Yield vs Duracion — por Rating LD';
+  document.getElementById('heatmap-title').textContent=on?'Mapa de Calor — Yield avg por Calificacion x Plazo':'Mapa de Calor — Yield avg por Rating LD x Plazo';
   render();
 }
 
@@ -454,9 +456,9 @@ function rHist(b){
 }
 
 function rScatter(b){
-  const pts=b.filter(x=>x.duration&&x.yield).map(x=>({x:x.duration,y:x.yield,issuer:x.issuer,spread:x.spread,score:x.score,rb:rb(x)}));
+  const pts=b.filter(x=>x.duration&&x.yield).map(x=>({x:x.duration,y:x.yield,issuer:x.issuer,spread:x.spread,cal:x.cal_rating,rb:rb(x)}));
   if(sC)sC.destroy();
-  sC=new Chart(document.getElementById('cs'),{type:'scatter',data:{datasets:[{data:pts,backgroundColor:pts.map(p=>(cM[p.rb]||'#64748b')+'99'),borderColor:pts.map(p=>cM[p.rb]||'#64748b'),borderWidth:1,pointRadius:4,pointHoverRadius:7}]},options:{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>`${c.raw.issuer}\nYield: ${c.raw.y.toFixed(2)}%  Dur: ${c.raw.x.toFixed(1)}y\nSpread: ${c.raw.spread!=null?Math.round(c.raw.spread*100)+' bps':'N/D'}  [${useLD&&c.raw.score!=null?'Score:'+c.raw.score.toFixed(1)+' →':''} ${c.raw.rb}]`},backgroundColor:'#111827',borderColor:'#1e2d45',borderWidth:1,bodyFont:{family:'IBM Plex Mono',size:11}}},scales:{x:{title:{display:true,text:'Duracion estimada (anos)',color:'#64748b',font:{family:'IBM Plex Mono',size:9}},ticks:{color:'#64748b',font:{family:'IBM Plex Mono',size:9}},grid:{color:'#1e2d45'}},y:{title:{display:true,text:'Yield (%)',color:'#64748b',font:{family:'IBM Plex Mono',size:9}},ticks:{color:'#64748b',font:{family:'IBM Plex Mono',size:9}},grid:{color:'#1e2d45'}}}}});
+  sC=new Chart(document.getElementById('cs'),{type:'scatter',data:{datasets:[{data:pts,backgroundColor:pts.map(p=>(cM[p.rb]||'#64748b')+'99'),borderColor:pts.map(p=>cM[p.rb]||'#64748b'),borderWidth:1,pointRadius:4,pointHoverRadius:7}]},options:{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>`${c.raw.issuer}\nYield: ${c.raw.y.toFixed(2)}%  Dur: ${c.raw.x.toFixed(1)}y\nSpread: ${c.raw.spread!=null?Math.round(c.raw.spread*100)+' bps':'N/D'}  [${useLD&&c.raw.cal?c.raw.cal:c.raw.rb}]`},backgroundColor:'#111827',borderColor:'#1e2d45',borderWidth:1,bodyFont:{family:'IBM Plex Mono',size:11}}},scales:{x:{title:{display:true,text:'Duracion estimada (anos)',color:'#64748b',font:{family:'IBM Plex Mono',size:9}},ticks:{color:'#64748b',font:{family:'IBM Plex Mono',size:9}},grid:{color:'#1e2d45'}},y:{title:{display:true,text:'Yield (%)',color:'#64748b',font:{family:'IBM Plex Mono',size:9}},ticks:{color:'#64748b',font:{family:'IBM Plex Mono',size:9}},grid:{color:'#1e2d45'}}}}});
 }
 
 
