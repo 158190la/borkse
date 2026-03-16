@@ -299,6 +299,15 @@ nav {
   align-items: center; flex-wrap: wrap;
 }
 .db-fl { font-family: var(--mono); font-size: 9px; color: var(--txt3); text-transform: uppercase; letter-spacing: .08em; }
+.db-tog-wrap { display:flex; align-items:center; gap:6px; margin-left:auto; }
+.db-tog-lbl { font-family:var(--mono); font-size:9px; color:var(--txt3); text-transform:uppercase; letter-spacing:.08em; white-space:nowrap; transition:color .2s; }
+.db-tog-lbl.active { color:var(--acc); }
+.db-toggle { position:relative; display:inline-block; width:34px; height:17px; }
+.db-toggle input { opacity:0; width:0; height:0; }
+.db-tog-slider { position:absolute; cursor:pointer; inset:0; background:var(--bdr2); border-radius:17px; transition:.2s; }
+.db-tog-slider:before { content:''; position:absolute; width:11px; height:11px; left:3px; bottom:3px; background:var(--txt3); border-radius:50%; transition:.2s; }
+input:checked + .db-tog-slider { background:rgba(0,212,255,.15); }
+input:checked + .db-tog-slider:before { transform:translateX(17px); background:var(--acc); }
 
 .db-select {
   background: var(--bg); color: var(--txt);
@@ -902,7 +911,12 @@ nav {
           <option value="">—</option>
           <option value="100">100+ bps</option><option value="200">200+ bps</option><option value="300">300+ bps</option>
         </select>
-        <span style="margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--txt3)" id="db-meta">—</span>
+        <div class="db-tog-wrap">
+          <span class="db-tog-lbl active" id="db-lbl-cal">Calificación</span>
+          <label class="db-toggle"><input type="checkbox" id="db-tog-ld" onchange="toggleDbLD(this.checked)"><span class="db-tog-slider"></span></label>
+          <span class="db-tog-lbl" id="db-lbl-ld">Score LD</span>
+        </div>
+        <span style="font-family:var(--mono);font-size:10px;color:var(--txt3)" id="db-meta">—</span>
       </div>
 
       <div class="db-grid">
@@ -1463,8 +1477,16 @@ function toast(msg, type = 'info', dur = 3500) {
 // DASHBOARD (Deutsche Börse)
 // ══════════════════════════════════════════════════════════
 let DB = [], hC = null, sC = null, curveC = null, dbSc = 'ya', dbSa = false, dbID = [];
+let dbUseLD = false;
 const dbAvg = a => a.length ? a.reduce((x,y)=>x+y,0)/a.length : null;
 const cM = {'AAA':'#00ff88','AA':'#7cfc00','A':'#00d4ff','BBB':'#ffd700','BB':'#ff9f40','B':'#ff6b35','CCC':'#ff4444','NR':'#64748b'};
+function dbRb(b) { return dbUseLD ? b.score_bucket : b.r_bucket; }
+function toggleDbLD(on) {
+  dbUseLD = on;
+  document.getElementById('db-lbl-cal').classList.toggle('active', !on);
+  document.getElementById('db-lbl-ld').classList.toggle('active', on);
+  dbRender();
+}
 
 // Tasas reales del Tesoro — se cargan desde /api/treasury al iniciar
 let TSY_LIVE = null;
@@ -1561,7 +1583,7 @@ function dbFilt() {
   const r=document.getElementById('fr').value, t=document.getElementById('ft').value;
   const s=document.getElementById('fs').value, y=parseFloat(document.getElementById('fy').value)||0;
   const sp=parseFloat(document.getElementById('fsp').value)||0;
-  return DB.filter(b=>(!r||b.r_bucket===r)&&(!t||b.t_bucket===t)&&(!s||b.sector===s)&&b.yield>=y&&(sp===0||b.spread==null||(b.spread*100)>=sp));
+  return DB.filter(b=>(!r||dbRb(b)===r)&&(!t||b.t_bucket===t)&&(!s||b.sector===s)&&b.yield>=y&&(sp===0||b.spread==null||(b.spread*100)>=sp));
 }
 
 function dbRender() {
@@ -1591,7 +1613,7 @@ function dbRHist(b) {
 }
 
 function dbRScatter(b) {
-  const pts=b.filter(x=>x.duration&&x.yield).map(x=>({x:x.duration,y:x.yield,issuer:x.issuer,spread:x.spread,rb:x.r_bucket}));
+  const pts=b.filter(x=>x.duration&&x.yield).map(x=>({x:x.duration,y:x.yield,issuer:x.issuer,spread:x.spread,score:x.score,rb:dbRb(x)}));
   if(sC) sC.destroy();
   sC=new Chart(document.getElementById('cs'),{type:'scatter',data:{datasets:[{data:pts,backgroundColor:pts.map(p=>(cM[p.rb]||'#64748b')+'99'),borderColor:pts.map(p=>cM[p.rb]||'#64748b'),borderWidth:1,pointRadius:4,pointHoverRadius:7}]},options:{plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>`${c.raw.issuer}\nYield: ${c.raw.y.toFixed(2)}%  Dur: ${c.raw.x.toFixed(1)}y\nSpread: ${c.raw.spread!=null?Math.round(c.raw.spread*100)+' bps':'N/D'}  [${c.raw.rb}]`},backgroundColor:'#0e1018',borderColor:'#1c2035',borderWidth:1,bodyFont:{family:'DM Mono',size:11}}},scales:{x:{title:{display:true,text:'Duración (años)',color:'#545d75',font:{family:'DM Mono',size:9}},ticks:{color:'#545d75',font:{family:'DM Mono',size:9}},grid:{color:'#1c2035'}},y:{title:{display:true,text:'Yield (%)',color:'#545d75',font:{family:'DM Mono',size:9}},ticks:{color:'#545d75',font:{family:'DM Mono',size:9}},grid:{color:'#1c2035'}}}}});
 }
@@ -1600,7 +1622,7 @@ let dbHmBonds=[];
 function dbRHeatmap(b) {
   dbHmBonds=b;
   const RS=['AAA','AA','A','BBB','BB','B','CCC','NR'],TS=['0-3a','3-7a','7-15a','15+a'],g={};
-  b.forEach(x=>{const k=x.r_bucket+'|'+x.t_bucket;if(!g[k])g[k]=[];g[k].push(x);});
+  b.forEach(x=>{const k=dbRb(x)+'|'+x.t_bucket;if(!g[k])g[k]=[];g[k].push(x);});
   const avs=Object.values(g).map(v=>dbAvg(v.map(x=>x.yield))).filter(Boolean);
   const mn=Math.min(...avs),mx=Math.max(...avs);
   function cc(y){if(!y)return'transparent';const t=(y-mn)/(mx-mn||1);return`rgba(${Math.round(10+t*245)},${Math.round(180-t*100)},${Math.round(210-t*200)},0.75)`;}
@@ -1618,7 +1640,7 @@ function dbRHeatmap(b) {
 }
 
 function dbShowHmDetail(r,t) {
-  const bonds=dbHmBonds.filter(x=>x.r_bucket===r&&x.t_bucket===t).sort((a,b)=>b.yield-a.yield);
+  const bonds=dbHmBonds.filter(x=>dbRb(x)===r&&x.t_bucket===t).sort((a,b)=>b.yield-a.yield);
   document.getElementById('hm-detail-title').textContent=`${r} · ${t} — ${bonds.length} bonos`;
   document.getElementById('hm-detail-body').innerHTML=bonds.map(b=>`<tr><td style="text-align:left;white-space:normal">${b.name}</td><td class="${b.yield>=6?'c-green':b.yield>=5?'c-acc':b.yield>=4?'c-gold':'c-muted'}">${b.yield.toFixed(2)}%</td><td class="c-muted">${b.years!=null?b.years+'a':'—'}</td></tr>`).join('');
   document.getElementById('hm-detail-empty').style.display='none';
@@ -1631,7 +1653,7 @@ function dbRCurve(b) {
   const ratingGroups=['AAA','AA','A','BBB','BB','B','CCC'];
   const ratingColors=['#00ff88','#7cfc00','#00d4ff','#ffd700','#ff9f40','#ff6b35','#ff4444'];
   const ratingDatasets=ratingGroups.map((r,i)=>{
-    const bondsR=b.filter(x=>x.r_bucket===r&&x.years);
+    const bondsR=b.filter(x=>dbRb(x)===r&&x.years);
     if(!bondsR.length) return null;
     const pts=xPts.map(xp=>{
       const w=xp<=3?1.5:xp<=7?2:3;
