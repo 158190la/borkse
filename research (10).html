@@ -1884,7 +1884,7 @@ function lcProcess(raw) {
   lcFilterCalcSym();
   if(prev) document.getElementById('lc-sym').value=prev;
   lcRenderTable(); lcRenderCurva();
-  if(sel.value) lcCalc();
+  if(document.getElementById('lc-sym').value) lcCalc();
   compInitHorizonte();
 }
 
