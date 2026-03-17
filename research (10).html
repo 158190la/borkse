@@ -1837,22 +1837,24 @@ const BONCAP_SYMS = new Set(['T30J6','T15E7','T30A7','T31Y7','T30J7']);
 
 async function lcLoad() {
   document.getElementById('lc-last-update').textContent='Cargando...';
+  let notesRaw, bondsRaw;
   try {
     const [rNotes, rBonds] = await Promise.all([
       fetch('https://data912.com/live/arg_notes'),
       fetch('https://data912.com/live/arg_bonds')
     ]);
-    const [notesRaw, bondsRaw] = await Promise.all([rNotes.json(), rBonds.json()]);
-    const boncaps  = bondsRaw.filter(b => BONCAP_SYMS.has(b.symbol));
-    const leCers   = notesRaw.filter(b => b.symbol && b.symbol[0] === 'X');
-    const bonCers  = bondsRaw.filter(b => BONCER_SYMS_SET.has(b.symbol));
-    lcProcess([...notesRaw, ...boncaps]);
-    lcProcessCer([...leCers, ...bonCers]);
-    document.getElementById('lc-last-update').textContent='Act: '+new Date().toLocaleTimeString('es-AR');
+    [notesRaw, bondsRaw] = await Promise.all([rNotes.json(), rBonds.json()]);
   } catch(e) {
     document.getElementById('lc-last-update').textContent='Error de conexión';
     toast('No se pudo conectar a data912.com','error');
+    return;
   }
+  const boncaps  = bondsRaw.filter(b => BONCAP_SYMS.has(b.symbol));
+  const leCers   = notesRaw.filter(b => b.symbol && b.symbol[0] === 'X');
+  const bonCers  = bondsRaw.filter(b => BONCER_SYMS_SET.has(b.symbol));
+  lcProcess([...notesRaw, ...boncaps]);
+  lcProcessCer([...leCers, ...bonCers]);
+  document.getElementById('lc-last-update').textContent='Act: '+new Date().toLocaleTimeString('es-AR');
 }
 
 function lcProcess(raw) {
