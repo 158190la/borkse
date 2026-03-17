@@ -359,6 +359,37 @@ input:checked + .db-tog-slider:before { transform:translateX(17px); background:v
 .cr-label { font-family: var(--mono); font-size: 10px; color: var(--txt3); }
 .cr-value { font-family: var(--mono); font-size: 13px; font-weight: 500; }
 
+/* ── COMPARADOR DE ALTERNATIVAS ──────────────────────────── */
+.comp-params {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px; margin-bottom: 16px;
+}
+.comp-cost-wrap {
+  background: rgba(201,149,42,.06); border: 1px solid rgba(201,149,42,.25);
+  border-radius: var(--radius); padding: 10px 12px;
+}
+.comp-inline { display:flex; align-items:center; gap:6px; }
+.comp-inline input { flex:1; min-width:0; }
+.comp-inline .comp-unit { font-family:var(--mono); font-size:11px; color:var(--txt3); white-space:nowrap; }
+.comp-results { border:1px solid var(--bdr); border-radius:var(--radius); overflow:hidden; margin-top:12px; }
+.comp-row {
+  display:grid; grid-template-columns:170px 1fr 90px 90px 130px;
+  gap:0; padding:10px 14px; align-items:center;
+  border-bottom:1px solid rgba(28,32,53,.6); transition:background .15s;
+}
+.comp-row:last-child { border-bottom:none; }
+.comp-row:hover { background:rgba(79,142,247,.03); }
+.comp-hdr { background:var(--bg); font-size:9px; font-family:var(--mono); color:var(--txt3); text-transform:uppercase; letter-spacing:.08em; padding:7px 14px; border-bottom:1px solid var(--bdr2); }
+.comp-best { background:rgba(52,200,122,.04); border-left:3px solid var(--green); }
+.comp-bar-wrap { background:var(--bdr); border-radius:2px; height:5px; width:100%; overflow:hidden; margin-top:5px; }
+.comp-bar { height:100%; border-radius:2px; transition:width .5s; }
+.comp-verdict {
+  margin-top:12px; padding:12px 16px;
+  background:rgba(79,142,247,.05); border:1px solid rgba(79,142,247,.15);
+  border-radius:var(--radius); font-family:var(--mono); font-size:11px; line-height:1.9;
+}
+.comp-badge { display:inline-block; font-size:8px; padding:2px 5px; border-radius:3px; font-weight:500; letter-spacing:.04em; font-family:var(--mono); margin-left:4px; }
+
 /* ── SCRAPER PAGE ────────────────────────────────────────── */
 .scraper-wrap { max-width: 760px; margin: 0 auto; padding: 40px 24px; }
 .scraper-card {
@@ -1067,6 +1098,55 @@ input:checked + .db-tog-slider:before { transform:translateX(17px); background:v
         </div>
 
       </div>
+
+      <!-- ── COMPARADOR DE ALTERNATIVAS ───────────────────────── -->
+      <div class="db-panel wide" style="margin-top:16px">
+        <div class="db-pt">Comparador de Alternativas — ¿Dónde poner $100?
+          <span style="font-weight:400;font-size:9px;margin-left:8px;color:var(--txt3)">Capital neto de costos al vencimiento</span>
+        </div>
+
+        <!-- Parámetros -->
+        <div class="comp-params">
+          <div class="calc-field">
+            <label>Horizonte (instrumento / fecha)</label>
+            <select id="comp-horizonte" onchange="compCalc()"><option value="">— cargando… —</option></select>
+          </div>
+          <div class="calc-field comp-cost-wrap">
+            <label>⚙ Costo por transacción</label>
+            <div class="comp-inline">
+              <input type="number" id="comp-costo" value="0.30" step="0.01" min="0" max="5" oninput="compCalc()">
+              <span class="comp-unit">%</span>
+            </div>
+          </div>
+          <div class="calc-field">
+            <label>Inflación mensual esperada</label>
+            <div class="comp-inline">
+              <input type="number" id="comp-cpi" value="3.0" step="0.1" min="0" oninput="compCalc()">
+              <span class="comp-unit">% / mes</span>
+            </div>
+          </div>
+          <div class="calc-field">
+            <label>CCL / MEP hoy (ARS/USD)</label>
+            <input type="number" id="comp-ccl-hoy" placeholder="ej. 1350" step="1" oninput="compCalc()">
+          </div>
+          <div class="calc-field">
+            <label>CCL / MEP en horizonte</label>
+            <input type="number" id="comp-ccl-fut" placeholder="ej. 1400" step="1" oninput="compCalc()">
+          </div>
+          <div class="calc-field">
+            <label>TNA Plazo Fijo (%)</label>
+            <input type="number" id="comp-pf-tna" placeholder="ej. 36" step="0.5" oninput="compCalc()">
+          </div>
+        </div>
+
+        <!-- Resultados -->
+        <div id="comp-resultado">
+          <div style="color:var(--txt3);font-family:var(--mono);font-size:11px;text-align:center;padding:24px">
+            Seleccioná un horizonte para comparar alternativas
+          </div>
+        </div>
+      </div>
+
     </div>
 
     <!-- ── SCRAPER ─────────────────────────────────────────── -->
@@ -1763,8 +1843,11 @@ async function lcLoad() {
       fetch('https://data912.com/live/arg_bonds')
     ]);
     const [notesRaw, bondsRaw] = await Promise.all([rNotes.json(), rBonds.json()]);
-    const boncaps = bondsRaw.filter(b => BONCAP_SYMS.has(b.symbol));
+    const boncaps  = bondsRaw.filter(b => BONCAP_SYMS.has(b.symbol));
+    const leCers   = notesRaw.filter(b => b.symbol && b.symbol[0] === 'X');
+    const bonCers  = bondsRaw.filter(b => BONCER_SYMS_SET.has(b.symbol));
     lcProcess([...notesRaw, ...boncaps]);
+    lcProcessCer([...leCers, ...bonCers]);
     document.getElementById('lc-last-update').textContent='Act: '+new Date().toLocaleTimeString('es-AR');
   } catch(e) {
     document.getElementById('lc-last-update').textContent='Error de conexión';
@@ -1802,6 +1885,7 @@ function lcProcess(raw) {
   if(prev) document.getElementById('lc-sym').value=prev;
   lcRenderTable(); lcRenderCurva();
   if(sel.value) lcCalc();
+  compInitHorizonte();
 }
 
 function lcRenderTable() {
@@ -1952,6 +2036,233 @@ function lcRenderComp() {
     <th style="text-align:left">Símbolo</th><th>Tipo</th><th>Venc.</th><th>Días</th><th>Precio</th><th>VF</th><th>TEM</th><th>TEA</th>
     ${montos.map(m=>`<th>Gan $${(m/1000).toFixed(0)}K</th>`).join('')}
   </tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+// ══════════════════════════════════════════════════════════
+// COMPARADOR DE ALTERNATIVAS
+// ══════════════════════════════════════════════════════════
+
+// VT (valor técnico por cada 100 VN) para instrumentos CER
+// Actualizar según CNV / broker cuando corresponda
+const VT_CER_MAP = {
+  'X15Y6': 100.00,  // LECER 15/05/2026 — nueva (licit 12-Mar-26)
+  'X30S6': 100.00,  // LECER 30/09/2026 — nueva (licit 12-Mar-26)
+  'TZXM7': 145.00,  // BONCER 31/03/2027 — estimado, actualizar
+  'TZX28': 175.00,  // BONCER 30/06/2028 — estimado, actualizar
+};
+const BONCER_SYMS_SET = new Set(['TZXM7','TZX28']);
+let CER_DATA = [];
+
+function lcCerParseSym(sym) {
+  if (!sym) return null;
+  if (BONCER_SYMS_SET.has(sym)) {
+    const dates = {'TZXM7':new Date(2027,2,31),'TZX28':new Date(2028,5,30)};
+    return dates[sym] ? {tipo:'BONCER', venc:dates[sym]} : null;
+  }
+  if (sym[0] !== 'X') return null;
+  const m = sym.slice(1).match(/^(\d{2})([A-Z])(\d)$/);
+  if (!m) return null;
+  const dia=parseInt(m[1]), mes=MES_LC[m[2]], ano=2020+parseInt(m[3]);
+  if (mes===undefined) return null;
+  return {tipo:'LECER', venc:new Date(ano,mes,dia)};
+}
+
+function lcProcessCer(raw) {
+  CER_DATA = [];
+  for (const item of raw) {
+    const p = lcCerParseSym(item.symbol);
+    if (!p) continue;
+    const dias = lcDias(p.venc);
+    if (dias < 0) continue;
+    const precio = item.c || item.px_bid || 0;
+    if (!precio) continue;
+    CER_DATA.push({sym:item.symbol, tipo:p.tipo, venc:p.venc, dias, precio, ask:item.px_ask||0});
+  }
+  compInitHorizonte();
+}
+
+function compInitHorizonte() {
+  const sel = document.getElementById('comp-horizonte');
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">— seleccioná —</option>';
+  const seen = new Set();
+  [...LC_DATA, ...CER_DATA]
+    .filter(d => d.dias > 0)
+    .sort((a,b) => a.dias - b.dias)
+    .forEach(d => {
+      const key = lcFmtI(d.venc);
+      if (seen.has(key)) return;
+      seen.add(key);
+      const o = document.createElement('option');
+      o.value = key;
+      o.textContent = `${d.sym} — ${lcFmt(d.venc)} (${d.dias}d)`;
+      sel.appendChild(o);
+    });
+  sel.value = prev || '';
+  if (sel.value) compCalc();
+}
+
+function compCalc() {
+  const hDate = document.getElementById('comp-horizonte').value;
+  if (!hDate) return;
+  const today = new Date(); today.setHours(0,0,0,0);
+  const hDias = Math.round((new Date(hDate) - today) / 86400000) + 1;
+  if (hDias <= 0) return;
+
+  const tx   = (parseFloat(document.getElementById('comp-costo').value)  || 0) / 100;
+  const cpi  = (parseFloat(document.getElementById('comp-cpi').value)    || 0) / 100;
+  const cclH = parseFloat(document.getElementById('comp-ccl-hoy').value) || 0;
+  const cclF = parseFloat(document.getElementById('comp-ccl-fut').value) || 0;
+  const pfT  = (parseFloat(document.getElementById('comp-pf-tna').value) || 0) / 100;
+  const meses = hDias / 30;
+  const alts = [];
+
+  // ── Tasa fija (LECAP / BONCAP) ──────────────────────────
+  LC_DATA.filter(d => Math.abs(d.dias - hDias) <= 45 && d.precio > 0 && d.vf > 0)
+    .forEach(d => {
+      // VN comprado con $100 después del costo de entrada
+      const vn = 10000 / (d.precio * (1 + tx));
+      const cf = vn * d.vf / 100;  // cobro al vencimiento sin costo de salida
+      alts.push({
+        sym: d.sym, label: d.sym,
+        sub: `${d.tipo} · ${d.dias}d · ${d.tem!=null ? d.tem.toFixed(3)+'% TEM' : ''}`,
+        cf, beq_cpi: d.tem,  // break-even: CPI mensual = TEM
+        badge: d.tipo==='LECAP' ? 'lecap' : 'boncap',
+      });
+    });
+
+  // ── CER instrumentos específicos ──────────────────────────
+  CER_DATA.filter(d => Math.abs(d.dias - hDias) <= 45 && d.precio > 0)
+    .forEach(d => {
+      const vt = VT_CER_MAP[d.sym] || 100;
+      const vt_mat = vt * Math.pow(1 + cpi, meses);
+      const vn = 10000 / (d.precio * (1 + tx));
+      const cf = vn * vt_mat / 100;
+      // tasa real implícita del instrumento en mercado
+      const real_tem = vt > 0 && d.precio > 0 ? (Math.pow(vt/d.precio*100, 30/d.dias)-1)*100 : null;
+      alts.push({
+        sym: d.sym, label: d.sym,
+        sub: `${d.tipo} · VT ${vt.toFixed(0)} · ${real_tem!=null ? 'CER+'+real_tem.toFixed(2)+'%' : 'CER'}`,
+        cf, beq_cpi: null, badge: 'cer',
+      });
+    });
+
+  // ── CER flat (sin instrumento específico) ─────────────────
+  if (cpi > 0) {
+    const cf = 100 / (1 + tx) * Math.pow(1 + cpi, meses);
+    alts.push({
+      sym: 'CER', label: 'CER (referencia)',
+      sub: `Inflación pura · ${(cpi*100).toFixed(2)}%/mes · costo entrada`,
+      cf, beq_cpi: null, badge: 'cer',
+    });
+  }
+
+  // ── Dólar CCL / MEP ──────────────────────────────────────
+  if (cclH > 0 && cclF > 0) {
+    const usd = 100 / (cclH * (1 + tx));
+    const cf  = usd * cclF * (1 - tx);
+    const dev = ((cclF - cclH) / cclH * 100);
+    alts.push({
+      sym: 'CCL', label: 'Dólar CCL/MEP',
+      sub: `$${cclH.toFixed(0)} → $${cclF.toFixed(0)} (${dev>=0?'+':''}${dev.toFixed(1)}% dev.)`,
+      cf, beq_cpi: null, badge: 'dolar',
+    });
+  }
+
+  // ── Plazo fijo ────────────────────────────────────────────
+  if (pfT > 0) {
+    const cf = 100 * Math.pow(1 + pfT/12, meses);
+    alts.push({
+      sym: 'PF', label: 'Plazo Fijo',
+      sub: `TNA ${(pfT*100).toFixed(1)}% · sin costo`,
+      cf, beq_cpi: null, badge: 'pf',
+    });
+  }
+
+  alts.sort((a,b) => b.cf - a.cf);
+  compRender(alts, hDias, cpi, tx);
+}
+
+const COMP_COLORS = {
+  lecap:'#4f8ef7', boncap:'#c9952a', cer:'#00d4ff', dolar:'#34c87a', pf:'#f0c060'
+};
+
+function compRender(alts, hDias, cpi, tx) {
+  const el = document.getElementById('comp-resultado');
+  if (!alts.length) {
+    el.innerHTML = '<div style="color:var(--txt3);font-family:var(--mono);font-size:11px;text-align:center;padding:24px">Sin instrumentos para ese horizonte. Probá ampliar el rango o actualizá precios.</div>';
+    return;
+  }
+  const meses = hDias / 30;
+  const cfVals = alts.map(a => a.cf);
+  const maxCf = Math.max(...cfVals), minCf = Math.min(...cfVals);
+  const range = maxCf - minCf || 1;
+
+  let html = `<div class="comp-results">
+  <div class="comp-row comp-hdr">
+    <div>Alternativa</div><div>Capital final ($100 invertidos)</div>
+    <div>Nominal</div><div>Real</div><div>Break-even CPI</div>
+  </div>`;
+
+  alts.forEach((a, i) => {
+    const ret_nom  = (a.cf / 100 - 1) * 100;
+    const cf_real  = a.cf / Math.pow(1 + cpi, meses);
+    const ret_real = (cf_real / 100 - 1) * 100;
+    const best     = i === 0;
+    const barW     = Math.round((a.cf - minCf) / range * 88 + 8);
+    const col      = COMP_COLORS[a.badge] || '#64748b';
+    const rC       = ret_nom  >= 0 ? 'var(--green)' : 'var(--red)';
+    const rrC      = ret_real >= 0 ? 'var(--green)' : 'var(--red)';
+
+    let beqHtml = '<span style="color:var(--txt3)">—</span>';
+    if (a.beq_cpi != null) {
+      const beats = cpi * 100 > a.beq_cpi;
+      beqHtml = `<span style="font-weight:600">${a.beq_cpi.toFixed(3)}%</span>/mes<br>
+        <span style="font-size:9px;color:${beats?'var(--red)':'var(--green)'}">
+          ${beats ? '▲ CER gana' : '▼ tasa fija gana'} con tu CPI</span>`;
+    }
+
+    html += `<div class="comp-row${best?' comp-best':''}">
+      <div>
+        <span style="font-family:var(--mono);font-size:12px;font-weight:600;color:${col}">${a.label}</span>
+        ${best?'<span class="comp-badge" style="background:rgba(52,200,122,.15);color:var(--green)">★ MEJOR</span>':''}
+        <div style="font-size:9px;color:var(--txt3);font-family:var(--mono);margin-top:3px">${a.sub}</div>
+      </div>
+      <div>
+        <span style="font-family:var(--mono);font-size:14px;font-weight:600">${a.cf.toFixed(2)}</span>
+        <div class="comp-bar-wrap"><div class="comp-bar" style="width:${barW}%;background:${col}"></div></div>
+      </div>
+      <div style="font-family:var(--mono);font-size:13px;color:${rC};font-weight:500">
+        ${ret_nom>=0?'+':''}${ret_nom.toFixed(2)}%
+      </div>
+      <div style="font-family:var(--mono);font-size:13px;color:${rrC};font-weight:500">
+        ${ret_real>=0?'+':''}${ret_real.toFixed(2)}%
+      </div>
+      <div style="font-family:var(--mono);font-size:11px;line-height:1.6">${beqHtml}</div>
+    </div>`;
+  });
+
+  html += '</div>';
+
+  // Veredicto ──────────────────────────────────────────────
+  const w = alts[0];
+  const w_ret  = (w.cf/100 - 1)*100;
+  const w_real = (w.cf/Math.pow(1+cpi,meses)/100 - 1)*100;
+  const best_lecap = alts.find(a => a.badge==='lecap' || a.badge==='boncap');
+  const beq_note = best_lecap && best_lecap.beq_cpi != null
+    ? `&nbsp;·&nbsp; tasa fija supera a CER si inflación mensual &lt; <b style="color:var(--gold2)">${best_lecap.beq_cpi.toFixed(3)}%</b>`
+    : '';
+
+  html += `<div class="comp-verdict">
+    <b style="color:var(--acc)">Veredicto</b>
+    &nbsp;·&nbsp; Horizonte ${hDias}d &nbsp;·&nbsp; CPI ${(cpi*100).toFixed(1)}%/mes
+    &nbsp;·&nbsp; Costo tx <b style="color:var(--gold2)">${(tx*100).toFixed(2)}%</b>${beq_note}<br>
+    <span style="color:var(--green)">▶ Mejor opción: <b>${w.label}</b></span>
+    &nbsp;→&nbsp; capital final <b>${w.cf.toFixed(2)}</b> pesos
+    &nbsp;·&nbsp; retorno real <b style="color:${w_real>=0?'var(--green)':'var(--red)'}">${w_real>=0?'+':''}${w_real.toFixed(2)}%</b>
+  </div>`;
+
+  el.innerHTML = html;
 }
 
 // ══════════════════════════════════════════════════════════
