@@ -848,6 +848,15 @@ input:checked + .db-tog-slider:before { transform:translateX(17px); background:v
       <button class="nav-item" data-page="globales" onclick="showPage('globales')">
         <span class="icon">$</span> Calc. Globales
       </button>
+      <button class="nav-item" data-page="monetario" onclick="showPage('monetario')">
+        <span class="icon">🇦🇷</span> Monitor AR <span class="nav-badge new">BCRA</span>
+      </button>
+      <button class="nav-item" data-page="predictor" onclick="showPage('predictor')">
+        <span class="icon">◎</span> Macro Predictor
+      </button>
+      <button class="nav-item" data-page="usmonitor" onclick="showPage('usmonitor')">
+        <span class="icon">🇺🇸</span> Monitor EEUU
+      </button>
       <button class="nav-item" data-page="scraper" onclick="showPage('scraper')">
         <span class="icon">↻</span> Actualizar Datos
       </button>
@@ -894,6 +903,24 @@ input:checked + .db-tog-slider:before { transform:translateX(17px); background:v
           <div class="card-icon">◉</div>
           <h3>Parte Diario</h3>
           <p>Claves del día, señales a monitorear, panorama global, Argentina y lectura LDWM.</p>
+          <span class="card-arrow">↗</span>
+        </div>
+        <div class="home-card" onclick="showPage('monetario')">
+          <div class="card-icon">🇦🇷</div>
+          <h3>Monitor Monetario AR</h3>
+          <p>Base monetaria, M1/M2/M3, TC de equilibrio (3 métodos), análisis de absorción de intereses del Tesoro y curva LECAP/BONCAP.</p>
+          <span class="card-arrow">↗</span>
+        </div>
+        <div class="home-card" onclick="showPage('predictor')">
+          <div class="card-icon">◎</div>
+          <h3>Macro Predictor AR</h3>
+          <p>Simulador de reservas, tipo de cambio y tasas. Perfil de vencimientos USD 2026–27, ingresos de divisas, confianza política post-legislativas. Todos los supuestos ajustables con sliders.</p>
+          <span class="card-arrow">↗</span>
+        </div>
+        <div class="home-card" onclick="showPage('usmonitor')">
+          <div class="card-icon">🇺🇸</div>
+          <h3>Monitor Economía EEUU</h3>
+          <p>Dashboard macro de Estados Unidos vía API FRED: PBI, inflación, desempleo, Fed Funds, curva de rendimientos, M2, crédito, housing y ciclo económico. Requiere API key gratuita de FRED.</p>
           <span class="card-arrow">↗</span>
         </div>
         <div class="home-card" onclick="showPage('scraper')">
@@ -1448,6 +1475,1440 @@ if __name__ == '__main__':
       </div>
     </div><!-- /page-globales -->
 
+    <!-- ══════════════════════════════════════════════════════
+         MONITOR MONETARIO ARGENTINA · BCRA v4.0
+    ══════════════════════════════════════════════════════ -->
+    <div id="page-monetario" class="page">
+    <style>
+    /* ── MONETARIO PAGE ── */
+    .mon-wrap { padding: 0; }
+    .mon-ticker {
+      display: flex; gap: 0; background: var(--surf);
+      border-bottom: 1px solid var(--bdr);
+      overflow-x: auto; scrollbar-width: none;
+    }
+    .mon-ticker::-webkit-scrollbar { display: none; }
+    .mon-tick {
+      display: flex; flex-direction: column; justify-content: center;
+      padding: 10px 18px; border-right: 1px solid var(--bdr);
+      flex-shrink: 0; min-width: 120px;
+    }
+    .mon-tick-l { font-family: var(--mono); font-size: 9px; color: var(--txt3); text-transform: uppercase; letter-spacing: .1em; margin-bottom: 3px; }
+    .mon-tick-v { font-family: var(--mono); font-size: 13px; font-weight: 500; color: var(--txt); }
+    .mon-tick-v.loading { background: var(--bdr2); color: transparent; border-radius: 3px; animation: mon-shim 1.5s ease infinite; }
+    @keyframes mon-shim { 0%,100%{opacity:.3} 50%{opacity:.8} }
+
+    .mon-topbar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 16px 28px; border-bottom: 1px solid var(--bdr);
+      background: var(--surf);
+    }
+    .mon-topbar h1 { font-family: var(--serif); font-size: 22px; font-style: italic; color: var(--txt); }
+    .mon-topbar-sub { font-family: var(--mono); font-size: 10px; color: var(--txt3); margin-top: 2px; }
+    .mon-refresh-btn {
+      display: flex; align-items: center; gap: 6px;
+      padding: 6px 14px; border-radius: var(--radius);
+      font-size: 11px; font-family: var(--mono);
+      background: rgba(79,142,247,.1); color: var(--acc);
+      border: 1px solid rgba(79,142,247,.2); cursor: pointer; transition: all .2s;
+    }
+    .mon-refresh-btn:hover { background: rgba(79,142,247,.18); }
+    .mon-refresh-btn.loading { opacity: .5; pointer-events: none; }
+    .mon-refresh-btn.loading .mon-spin { animation: spin .8s linear infinite; display: inline-block; }
+
+    .mon-body { padding: 20px 28px 40px; }
+
+    .mon-sec {
+      display: flex; align-items: center; gap: 10px;
+      margin: 24px 0 12px;
+    }
+    .mon-sec-tag {
+      font-family: var(--mono); font-size: 9px; letter-spacing: .12em; text-transform: uppercase;
+      padding: 2px 8px; border-radius: 3px;
+      border: 1px solid rgba(79,142,247,.25); background: rgba(79,142,247,.06); color: var(--acc2);
+    }
+    .mon-sec-tag.gold   { border-color: rgba(201,149,42,.3); background: rgba(201,149,42,.07); color: var(--gold2); }
+    .mon-sec-tag.green  { border-color: rgba(52,200,122,.25); background: rgba(52,200,122,.06); color: var(--green); }
+    .mon-sec-tag.orange { border-color: rgba(240,144,48,.25); background: rgba(240,144,48,.06); color: var(--orange); }
+    .mon-sec-line { flex: 1; height: 1px; background: var(--bdr); }
+    .mon-sec-ts { font-family: var(--mono); font-size: 9px; color: var(--txt3); }
+
+    /* KPI grid */
+    .mon-kpi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(195px,1fr)); gap: 1px; background: var(--bdr); border: 1px solid var(--bdr); border-radius: var(--radius); overflow: hidden; }
+    .mon-kpi { background: var(--surf); padding: 14px 16px; position: relative; }
+    .mon-kpi::before { content:''; position:absolute; top:0; left:0; right:0; height:2px; background: var(--mkc, var(--acc)); opacity:.6; }
+    .mon-kpi-l { font-family: var(--mono); font-size: 9px; color: var(--txt3); text-transform: uppercase; letter-spacing: .09em; margin-bottom: 7px; line-height: 1.4; }
+    .mon-kpi-v { font-family: var(--mono); font-size: 19px; font-weight: 500; color: var(--txt); line-height: 1; margin-bottom: 4px; }
+    .mon-kpi-v.loading { background: var(--bdr2); color: transparent; border-radius: 3px; animation: mon-shim 1.5s ease infinite; }
+    .mon-kpi-s { font-family: var(--mono); font-size: 9px; color: var(--txt3); }
+    .mon-kpi-d { font-family: var(--mono); font-size: 9px; color: var(--txt3); margin-top: 5px; }
+    .mon-delta { font-family: var(--mono); font-size: 10px; font-weight: 500; }
+    .mon-delta.up { color: var(--green); } .mon-delta.dn { color: var(--red); } .mon-delta.neu { color: var(--orange); }
+
+    /* 2-col charts */
+    .mon-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--bdr); border: 1px solid var(--bdr); border-radius: var(--radius); overflow: hidden; }
+    .mon-chart-box { background: var(--surf); padding: 16px 18px; }
+    .mon-chart-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+    .mon-chart-title { font-family: var(--mono); font-size: 9px; color: var(--txt3); text-transform: uppercase; letter-spacing: .1em; }
+    .mon-per-btns { display: flex; gap: 3px; }
+    .mon-per-btn { font-family: var(--mono); font-size: 9px; padding: 2px 6px; border: 1px solid var(--bdr2); background: transparent; color: var(--txt3); cursor: pointer; border-radius: 3px; transition: all .12s; }
+    .mon-per-btn.active, .mon-per-btn:hover { border-color: var(--acc); color: var(--acc); background: rgba(79,142,247,.08); }
+    .mon-ch-wrap { position: relative; height: 160px; }
+    @media(max-width:860px){ .mon-charts { grid-template-columns: 1fr; } }
+
+    /* TC equilibrio */
+    .mon-tc-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 1px; background: var(--bdr); border: 1px solid rgba(201,149,42,.2); border-radius: var(--radius); overflow: hidden; }
+    .mon-tc-item { background: var(--surf2); padding: 16px 18px; }
+    .mon-tc-method { font-family: var(--mono); font-size: 9px; color: var(--txt3); text-transform: uppercase; letter-spacing: .1em; margin-bottom: 8px; }
+    .mon-tc-val { font-family: var(--mono); font-size: 22px; font-weight: 500; color: var(--gold2); line-height: 1; margin-bottom: 4px; }
+    .mon-tc-val.loading { background: var(--bdr2); color: transparent; border-radius: 3px; animation: mon-shim 1.5s ease infinite; height: 26px; }
+    .mon-tc-formula { font-family: var(--mono); font-size: 9px; color: var(--txt3); margin-bottom: 4px; }
+    .mon-tc-spread { font-family: var(--mono); font-size: 10px; font-weight: 500; margin-top: 3px; }
+    .mon-tc-extra { display: grid; grid-template-columns: repeat(3,1fr); gap: 1px; background: var(--bdr); border: 1px solid var(--bdr); border-radius: var(--radius); overflow: hidden; margin-top: 10px; }
+    .mon-tc-extra-item { background: var(--surf); padding: 12px 16px; }
+    .mon-tc-extra-l { font-family: var(--mono); font-size: 9px; color: var(--txt3); text-transform: uppercase; letter-spacing: .09em; margin-bottom: 5px; }
+    .mon-tc-extra-v { font-family: var(--mono); font-size: 17px; font-weight: 500; color: var(--txt); }
+    .mon-tc-extra-v.loading { background: var(--bdr2); color: transparent; border-radius: 3px; animation: mon-shim 1.5s ease infinite; height: 20px; }
+    @media(max-width:860px){ .mon-tc-grid { grid-template-columns: 1fr; } .mon-tc-extra { grid-template-columns: 1fr 1fr; } }
+
+    /* Absorción */
+    .mon-abs-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 1px; background: var(--bdr); border: 1px solid rgba(240,144,48,.2); border-radius: var(--radius); overflow: hidden; }
+    .mon-abs-item { background: var(--surf2); padding: 14px 16px; }
+    .mon-abs-l { font-family: var(--mono); font-size: 9px; color: var(--txt3); text-transform: uppercase; letter-spacing: .09em; margin-bottom: 7px; line-height: 1.4; }
+    .mon-abs-v { font-family: var(--mono); font-size: 16px; font-weight: 500; color: var(--orange); line-height: 1; margin-bottom: 4px; }
+    .mon-abs-v.loading { background: var(--bdr2); color: transparent; border-radius: 3px; animation: mon-shim 1.5s ease infinite; height: 20px; }
+    .mon-abs-note { font-family: var(--mono); font-size: 9px; color: var(--txt3); line-height: 1.6; }
+    .mon-abs-note b { color: var(--txt2); }
+    .mon-mech { background: var(--surf); border: 1px solid rgba(240,144,48,.15); border-radius: var(--radius); padding: 14px 18px; margin-top: 10px; }
+    .mon-mech-title { font-family: var(--mono); font-size: 9px; color: var(--orange); text-transform: uppercase; letter-spacing: .1em; margin-bottom: 10px; }
+    .mon-mech-row { display: flex; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--bdr); }
+    .mon-mech-row:last-child { border-bottom: none; }
+    .mon-mech-n { font-family: var(--mono); font-size: 9px; color: var(--orange); flex-shrink: 0; padding-top: 1px; }
+    .mon-mech-t { font-size: 12px; color: var(--txt2); line-height: 1.55; }
+    .mon-mech-t b { color: var(--txt); }
+    @media(max-width:860px){ .mon-abs-grid { grid-template-columns: 1fr 1fr; } }
+
+    /* Tabla indicadores */
+    .mon-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--bdr); border: 1px solid var(--bdr); border-radius: var(--radius); overflow: hidden; }
+    @media(max-width:860px){ .mon-2col { grid-template-columns: 1fr; } }
+    .mon-tbl-box { background: var(--surf); padding: 16px 18px; }
+    .mon-tbl-title { font-family: var(--mono); font-size: 9px; color: var(--txt3); text-transform: uppercase; letter-spacing: .1em; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--bdr); display: flex; align-items: center; gap: 6px; }
+    .mon-tbl-title::before { content:''; display:inline-block; width:3px; height:10px; background:var(--acc); border-radius:2px; }
+    .mon-tbl { width: 100%; border-collapse: collapse; }
+    .mon-tbl tr { border-bottom: 1px solid rgba(28,32,53,.7); }
+    .mon-tbl tr:last-child { border-bottom: none; }
+    .mon-tbl td { padding: 6px 2px; font-family: var(--mono); font-size: 10px; }
+    .mon-tbl td:first-child { color: var(--txt2); padding-right: 12px; }
+    .mon-tbl td:last-child { color: var(--txt); text-align: right; font-weight: 500; }
+    .mon-tbl td:last-child.up { color: var(--green); }
+    .mon-tbl td:last-child.dn { color: var(--red); }
+    .mon-tbl td:last-child.neu { color: var(--orange); }
+    .mon-tbl td.loading { background: var(--bdr2); color: transparent !important; border-radius: 2px; animation: mon-shim 1.5s ease infinite; }
+
+    /* LECAP table */
+    .mon-lecap-wrap { overflow-x: auto; }
+    .mon-lecap-tbl { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 10px; }
+    .mon-lecap-tbl th { padding: 6px 10px; text-align: left; color: var(--txt3); font-size: 9px; font-weight: 500; text-transform: uppercase; letter-spacing: .06em; border-bottom: 1px solid var(--bdr); cursor: default; }
+    .mon-lecap-tbl th:not(:first-child) { text-align: right; }
+    .mon-lecap-tbl td { padding: 7px 10px; border-bottom: 1px solid rgba(28,32,53,.6); }
+    .mon-lecap-tbl td:not(:first-child):not(:nth-child(2)):not(:nth-child(3)) { text-align: right; }
+    .mon-lecap-tbl tr:hover td { background: rgba(79,142,247,.025); }
+    .mon-disclaimer { font-family: var(--mono); font-size: 9px; color: var(--txt3); border: 1px solid var(--bdr); border-radius: var(--radius); padding: 10px 14px; margin-top: 16px; line-height: 1.8; }
+    </style>
+
+    <div class="mon-wrap">
+      <!-- Ticker bar -->
+      <div class="mon-ticker">
+        <div class="mon-tick"><div class="mon-tick-l">TC Mayorista</div><div class="mon-tick-v loading" id="mt-tc">—</div></div>
+        <div class="mon-tick"><div class="mon-tick-l">TC Minorista</div><div class="mon-tick-v loading" id="mt-tcm">—</div></div>
+        <div class="mon-tick"><div class="mon-tick-l">Reservas</div><div class="mon-tick-v loading" id="mt-res">—</div></div>
+        <div class="mon-tick"><div class="mon-tick-l">Base Mon.</div><div class="mon-tick-v loading" id="mt-bm">—</div></div>
+        <div class="mon-tick"><div class="mon-tick-l">M2</div><div class="mon-tick-v loading" id="mt-m2">—</div></div>
+        <div class="mon-tick"><div class="mon-tick-l">BADLAR TNA</div><div class="mon-tick-v loading" id="mt-badlar">—</div></div>
+        <div class="mon-tick"><div class="mon-tick-l">IPC Mensual</div><div class="mon-tick-v loading" id="mt-ipc">—</div></div>
+        <div class="mon-tick"><div class="mon-tick-l">IPC Interanual</div><div class="mon-tick-v loading" id="mt-ipc-ia">—</div></div>
+        <div class="mon-tick"><div class="mon-tick-l">Riesgo País</div><div class="mon-tick-v loading" id="mt-rp">—</div></div>
+      </div>
+
+      <!-- Topbar -->
+      <div class="mon-topbar">
+        <div>
+          <h1>Monitor Monetario Argentina</h1>
+          <div class="mon-topbar-sub">API BCRA v4.0 · ArgentinaDatos · Última carga: <span id="mt-ts">—</span></div>
+        </div>
+        <button class="mon-refresh-btn" id="mt-btn" onclick="monLoad()">
+          <span class="mon-spin" style="display:none">⟳</span>
+          ↻ Actualizar
+        </button>
+      </div>
+
+      <div class="mon-body">
+
+        <!-- M1 / M2 / M3 -->
+        <div class="mon-sec"><span class="mon-sec-tag">Agregados Monetarios · M1 / M2 / M3 est.</span><div class="mon-sec-line"></div></div>
+        <div class="mon-kpi-grid">
+          <div class="mon-kpi" style="--mkc:var(--acc)">
+            <div class="mon-kpi-l">M1 — Circ. + Ctas Ctes</div>
+            <div class="mon-kpi-v loading" id="mk-m1">—</div>
+            <div class="mon-kpi-s">Billones de ARS</div>
+            <div class="mon-kpi-d" id="mk-m1-d">—</div>
+          </div>
+          <div class="mon-kpi" style="--mkc:var(--green)">
+            <div class="mon-kpi-l">M2 — M1 + Cajas de Ahorro</div>
+            <div class="mon-kpi-v loading" id="mk-m2">—</div>
+            <div class="mon-kpi-s">Billones de ARS</div>
+            <div class="mon-kpi-d" id="mk-m2-d">—</div>
+          </div>
+          <div class="mon-kpi" style="--mkc:var(--gold)">
+            <div class="mon-kpi-l">M3 est. — M2 + Plazos Fijos</div>
+            <div class="mon-kpi-v loading" id="mk-m3">—</div>
+            <div class="mon-kpi-s">Billones de ARS</div>
+            <div class="mon-kpi-d" id="mk-m3-d">—</div>
+          </div>
+          <div class="mon-kpi" style="--mkc:var(--orange)">
+            <div class="mon-kpi-l">Depósitos a Plazo Fijo (priv.)</div>
+            <div class="mon-kpi-v loading" id="mk-dpf">—</div>
+            <div class="mon-kpi-s">Billones de ARS</div>
+            <div class="mon-kpi-d" id="mk-dpf-d">—</div>
+          </div>
+          <div class="mon-kpi" style="--mkc:var(--red)">
+            <div class="mon-kpi-l">Pases Pasivos / LEFI (BCRA)</div>
+            <div class="mon-kpi-v loading" id="mk-pases">—</div>
+            <div class="mon-kpi-s">Billones de ARS</div>
+            <div class="mon-kpi-d" id="mk-pases-d">—</div>
+          </div>
+          <div class="mon-kpi" style="--mkc:var(--acc)">
+            <div class="mon-kpi-l">Préstamos Sector Privado</div>
+            <div class="mon-kpi-v loading" id="mk-prest">—</div>
+            <div class="mon-kpi-s">Billones de ARS</div>
+            <div class="mon-kpi-d" id="mk-prest-d">—</div>
+          </div>
+        </div>
+
+        <!-- Gráficos -->
+        <div class="mon-sec"><span class="mon-sec-tag">Evolución Histórica</span><div class="mon-sec-line"></div></div>
+        <div class="mon-charts">
+          <div class="mon-chart-box">
+            <div class="mon-chart-head">
+              <span class="mon-chart-title">BASE MONETARIA (M ARS)</span>
+              <div class="mon-per-btns">
+                <button class="mon-per-btn active" onclick="monGPer('bm',30,this)">1M</button>
+                <button class="mon-per-btn" onclick="monGPer('bm',90,this)">3M</button>
+                <button class="mon-per-btn" onclick="monGPer('bm',180,this)">6M</button>
+                <button class="mon-per-btn" onclick="monGPer('bm',365,this)">1A</button>
+              </div>
+            </div>
+            <div class="mon-ch-wrap"><canvas id="mon-ch-bm"></canvas></div>
+          </div>
+          <div class="mon-chart-box">
+            <div class="mon-chart-head">
+              <span class="mon-chart-title">M2 AMPLIO (M ARS)</span>
+              <div class="mon-per-btns">
+                <button class="mon-per-btn active" onclick="monGPer('m2',30,this)">1M</button>
+                <button class="mon-per-btn" onclick="monGPer('m2',90,this)">3M</button>
+                <button class="mon-per-btn" onclick="monGPer('m2',180,this)">6M</button>
+                <button class="mon-per-btn" onclick="monGPer('m2',365,this)">1A</button>
+              </div>
+            </div>
+            <div class="mon-ch-wrap"><canvas id="mon-ch-m2"></canvas></div>
+          </div>
+          <div class="mon-chart-box">
+            <div class="mon-chart-head">
+              <span class="mon-chart-title">TC MAYORISTA REF. (ARS/USD)</span>
+              <div class="mon-per-btns">
+                <button class="mon-per-btn active" onclick="monGPer('tc',30,this)">1M</button>
+                <button class="mon-per-btn" onclick="monGPer('tc',90,this)">3M</button>
+                <button class="mon-per-btn" onclick="monGPer('tc',180,this)">6M</button>
+                <button class="mon-per-btn" onclick="monGPer('tc',365,this)">1A</button>
+              </div>
+            </div>
+            <div class="mon-ch-wrap"><canvas id="mon-ch-tc"></canvas></div>
+          </div>
+          <div class="mon-chart-box">
+            <div class="mon-chart-head">
+              <span class="mon-chart-title">RESERVAS INTERNACIONALES (MUSD)</span>
+              <div class="mon-per-btns">
+                <button class="mon-per-btn active" onclick="monGPer('res',30,this)">1M</button>
+                <button class="mon-per-btn" onclick="monGPer('res',90,this)">3M</button>
+                <button class="mon-per-btn" onclick="monGPer('res',180,this)">6M</button>
+              </div>
+            </div>
+            <div class="mon-ch-wrap"><canvas id="mon-ch-res"></canvas></div>
+          </div>
+        </div>
+
+        <!-- TC de equilibrio -->
+        <div class="mon-sec"><span class="mon-sec-tag gold">TC de Equilibrio Monetario · 3 métodos</span><div class="mon-sec-line"></div><span class="mon-sec-ts">Solo orientativo — no incorpora factores estructurales</span></div>
+        <div class="mon-tc-grid">
+          <div class="mon-tc-item">
+            <div class="mon-tc-method">① Base Monetaria / Reservas</div>
+            <div class="mon-tc-val loading" id="mt-eq1">—</div>
+            <div class="mon-tc-formula">Base (M ARS) ÷ Reservas (MUSD)</div>
+            <div class="mon-tc-spread" id="mt-eq1-sp"></div>
+          </div>
+          <div class="mon-tc-item">
+            <div class="mon-tc-method">② M2 / Reservas</div>
+            <div class="mon-tc-val loading" id="mt-eq2">—</div>
+            <div class="mon-tc-formula">M2 amplio (M ARS) ÷ Reservas (MUSD)</div>
+            <div class="mon-tc-spread" id="mt-eq2-sp"></div>
+          </div>
+          <div class="mon-tc-item">
+            <div class="mon-tc-method">③ M3 estimado / Reservas</div>
+            <div class="mon-tc-val loading" id="mt-eq3">—</div>
+            <div class="mon-tc-formula">M3 est. (M ARS) ÷ Reservas (MUSD)</div>
+            <div class="mon-tc-spread" id="mt-eq3-sp"></div>
+          </div>
+        </div>
+        <div class="mon-tc-extra">
+          <div class="mon-tc-extra-item">
+            <div class="mon-tc-extra-l">TC Oficial Mayorista (actual)</div>
+            <div class="mon-tc-extra-v loading" id="mt-of">—</div>
+          </div>
+          <div class="mon-tc-extra-item">
+            <div class="mon-tc-extra-l">Crawl implícito (30d)</div>
+            <div class="mon-tc-extra-v loading" id="mt-crawl">—</div>
+          </div>
+          <div class="mon-tc-extra-item">
+            <div class="mon-tc-extra-l">Multiplicador M3 / Base</div>
+            <div class="mon-tc-extra-v loading" id="mt-mult">—</div>
+          </div>
+        </div>
+
+        <!-- Absorción de intereses -->
+        <div class="mon-sec"><span class="mon-sec-tag orange">Absorción de Intereses · Deuda Tesoro en ARS</span><div class="mon-sec-line"></div></div>
+        <div class="mon-mech">
+          <div class="mon-mech-title">Circuito de esterilización — 3 válvulas</div>
+          <div class="mon-mech-row"><span class="mon-mech-n">①</span><span class="mon-mech-t"><b>Rollover voluntario:</b> si el mercado renueva vencimientos + intereses en la siguiente licitación, los pesos no salen del circuito financiero. Rollover &gt;100% = absorción neta. Base no se toca.</span></div>
+          <div class="mon-mech-row"><span class="mon-mech-n">②</span><span class="mon-mech-t"><b>LEFI en bancos (reemplaza LELIQ):</b> los intereses del Tesoro sobre LEFI llegan a los bancos como ingreso. Si se reinvierten en LEFI / LECAP secundario, quedan contenidos. El riesgo de expansión migró del BCRA al Tesoro.</span></div>
+          <div class="mon-mech-row"><span class="mon-mech-n">③</span><span class="mon-mech-t"><b>Superávit fiscal primario:</b> la recaudación excede el gasto, generando espacio para absorber vencimientos sin emitir. El riesgo aparece cuando el rollover cae &lt;100%.</span></div>
+        </div>
+        <div class="mon-abs-grid" style="margin-top:10px">
+          <div class="mon-abs-item">
+            <div class="mon-abs-l">Stock deuda Tesoro en ARS (est. OPC)</div>
+            <div class="mon-abs-v" id="ma-stock">~$272 B ARS</div>
+            <div class="mon-abs-note">Dato oct-2025 · Oficina Presupuesto del Congreso.<br>Actualizar manualmente cada mes.</div>
+          </div>
+          <div class="mon-abs-item">
+            <div class="mon-abs-l">Interés anual estimado al stock</div>
+            <div class="mon-abs-v loading" id="ma-int">—</div>
+            <div class="mon-abs-note">Stock × BADLAR vigente TNA. <b>Orden de magnitud.</b></div>
+          </div>
+          <div class="mon-abs-item">
+            <div class="mon-abs-l">Interés mensual estimado</div>
+            <div class="mon-abs-v loading" id="ma-intm">—</div>
+            <div class="mon-abs-note">÷ 12. Si rollover = 100%, <b>no impacta base.</b></div>
+          </div>
+          <div class="mon-abs-item">
+            <div class="mon-abs-l">Intereses / Base Monetaria</div>
+            <div class="mon-abs-v loading" id="ma-pct">—</div>
+            <div class="mon-abs-note">% que representa el flujo mensual sobre la base actual.</div>
+          </div>
+          <div class="mon-abs-item">
+            <div class="mon-abs-l">Expansión base observada (30d)</div>
+            <div class="mon-abs-v loading" id="ma-exp">—</div>
+            <div class="mon-abs-note">Variación efectiva últimos 30 días en base monetaria.</div>
+          </div>
+          <div class="mon-abs-item">
+            <div class="mon-abs-l">Vencimientos est. 2026</div>
+            <div class="mon-abs-v">~$211 B ARS</div>
+            <div class="mon-abs-note">Dato: <b>Sec. de Finanzas</b> (dic-2025). ~50% en 1T 2026.</div>
+          </div>
+        </div>
+
+        <!-- LECAP / BONCAP -->
+        <div class="mon-sec"><span class="mon-sec-tag green">LECAP / BONCAP vigentes · ArgentinaDatos</span><div class="mon-sec-line"></div></div>
+        <div style="background:var(--surf);border:1px solid var(--bdr);border-radius:var(--radius);padding:16px 18px">
+          <div class="mon-tbl-title">CURVA VIGENTE · TASAS IMPLÍCITAS DE MERCADO</div>
+          <div id="mt-lec-loading" style="font-family:var(--mono);font-size:10px;color:var(--txt3);padding:12px 0">Cargando letras...</div>
+          <div class="mon-lecap-wrap">
+            <table class="mon-lecap-tbl" id="mt-lec-tbl" style="display:none">
+              <thead>
+                <tr>
+                  <th>Tipo</th><th>Ticker</th><th>Vencimiento</th>
+                  <th style="text-align:right">Días</th>
+                  <th style="text-align:right">TEM %</th>
+                  <th style="text-align:right">TNA equiv.</th>
+                  <th style="text-align:right">TEA equiv.</th>
+                </tr>
+              </thead>
+              <tbody id="mt-lec-body"></tbody>
+            </table>
+          </div>
+          <div id="mt-lec-note" style="display:none;font-family:var(--mono);font-size:9px;color:var(--txt3);margin-top:8px;line-height:1.7">
+            TEM = Tasa efectiva mensual capitalizable. TNA = TEM×12. TEA = (1+TEM/100)^12−1. Fuente: ArgentinaDatos (no oficial).
+          </div>
+        </div>
+
+        <!-- Indicadores calculados -->
+        <div class="mon-sec"><span class="mon-sec-tag">Indicadores Calculados</span><div class="mon-sec-line"></div></div>
+        <div class="mon-2col">
+          <div class="mon-tbl-box">
+            <div class="mon-tbl-title">MONETARIOS Y CAMBIARIOS</div>
+            <table class="mon-tbl">
+              <tr><td>Var. Base 1M</td><td class="loading" id="mni-bm1">—</td></tr>
+              <tr><td>Var. Base 3M</td><td class="loading" id="mni-bm3">—</td></tr>
+              <tr><td>Var. M2 1M</td><td class="loading" id="mni-m21">—</td></tr>
+              <tr><td>Ratio M2 / Base</td><td class="loading" id="mni-m2bm">—</td></tr>
+              <tr><td>Ratio M3est / Base</td><td class="loading" id="mni-m3bm">—</td></tr>
+              <tr><td>Plazo Fijo / M3est</td><td class="loading" id="mni-pfm3">—</td></tr>
+              <tr><td>Var. Reservas 1M</td><td class="loading" id="mni-res1">—</td></tr>
+              <tr><td>Var. TC Mayorista 1M</td><td class="loading" id="mni-tc1">—</td></tr>
+              <tr><td>Var. TC Mayorista 3M</td><td class="loading" id="mni-tc3">—</td></tr>
+            </table>
+          </div>
+          <div class="mon-tbl-box">
+            <div class="mon-tbl-title">TASAS Y PRECIOS</div>
+            <table class="mon-tbl">
+              <tr><td>BADLAR TNA</td><td class="loading" id="mni-badlar">—</td></tr>
+              <tr><td>BADLAR TEA equiv.</td><td class="loading" id="mni-badlar-ea">—</td></tr>
+              <tr><td>Dep. 30d TNA</td><td class="loading" id="mni-dep30">—</td></tr>
+              <tr><td>Tasa personal TNA</td><td class="loading" id="mni-pers">—</td></tr>
+              <tr><td>IPC mensual (último)</td><td class="loading" id="mni-ipc1">—</td></tr>
+              <tr><td>IPC interanual</td><td class="loading" id="mni-ipc-ia">—</td></tr>
+              <tr><td>Tasa real (BADLAR/12 − IPC)</td><td class="loading" id="mni-real">—</td></tr>
+              <tr><td>Tasa real ex-ante</td><td class="loading" id="mni-real2">—</td></tr>
+              <tr><td>Spread TC min / may</td><td class="loading" id="mni-spr">—</td></tr>
+            </table>
+          </div>
+        </div>
+
+        <div class="mon-disclaimer">
+          <b>AVISO:</b> TC de equilibrio = métodos monetarios simplificados. No incorporan productividad, pass-through ni expectativas. Stock deuda Tesoro (~$272 B) según OPC oct-2025 — actualizar manualmente mensualmente. Intereses estimados con BADLAR como proxy. Ningún dato constituye asesoramiento de inversión · Uso interno LDWM.
+        </div>
+
+      </div><!-- /mon-body -->
+    </div><!-- /mon-wrap -->
+    </div><!-- /page-monetario -->
+
+    <!-- ══════════════════════════════════════════════════════
+         MACRO PREDICTOR — Argentina 2026
+         Contexto: post-legislativas oct-2025, banda cambiaria,
+         acuerdo FMI EFF activo, reservas en reconstrucción
+    ══════════════════════════════════════════════════════ -->
+    <div id="page-predictor" class="page">
+    <style>
+    .pr-wrap { display:flex; height:calc(100vh - 56px); overflow:hidden; }
+
+    /* Panel izquierdo */
+    .pr-left {
+      width:320px; flex-shrink:0; background:var(--surf);
+      border-right:1px solid var(--bdr); overflow-y:auto; scrollbar-width:thin;
+    }
+    .pr-left-head {
+      position:sticky; top:0; z-index:5;
+      background:var(--surf); border-bottom:1px solid var(--bdr);
+      padding:12px 16px; display:flex; align-items:center; justify-content:space-between;
+    }
+    .pr-left-head h2 { font-family:var(--serif); font-size:16px; font-style:italic; }
+    .pr-sub-note { font-family:var(--mono); font-size:9px; color:var(--txt3); margin-top:2px; }
+    .pr-reset { font-family:var(--mono); font-size:9px; padding:3px 9px;
+      background:transparent; border:1px solid var(--bdr2); color:var(--txt3);
+      border-radius:var(--radius); cursor:pointer; transition:all .15s; }
+    .pr-reset:hover { border-color:var(--acc); color:var(--acc); }
+
+    .pr-sc-bar { padding:8px 16px 10px; border-bottom:1px solid var(--bdr);
+      display:flex; gap:5px; flex-wrap:wrap; }
+    .pr-sc { font-family:var(--mono); font-size:9px; padding:4px 10px; letter-spacing:.05em;
+      text-transform:uppercase; border:1px solid var(--bdr2); background:transparent;
+      color:var(--txt3); border-radius:3px; cursor:pointer; transition:all .15s; }
+    .pr-sc:hover { border-color:var(--acc); color:var(--acc); }
+    .pr-sc.active { background:rgba(79,142,247,.1); border-color:var(--acc); color:var(--acc); }
+    .pr-sc.s-bear { border-color:rgba(240,80,80,.3); color:var(--red); }
+    .pr-sc.s-bear:hover,.pr-sc.s-bear.active { background:rgba(240,80,80,.08); }
+    .pr-sc.s-bull { border-color:rgba(52,200,122,.3); color:var(--green); }
+    .pr-sc.s-bull:hover,.pr-sc.s-bull.active { background:rgba(52,200,122,.08); }
+
+    .pr-group { border-bottom:1px solid var(--bdr); }
+    .pr-gtitle {
+      padding:9px 16px 5px; font-family:var(--mono); font-size:9px;
+      color:var(--txt3); text-transform:uppercase; letter-spacing:.12em;
+      display:flex; align-items:center; gap:6px;
+    }
+    .pr-gtitle::before { content:''; display:inline-block; width:3px; height:9px;
+      background:var(--gc, var(--acc)); border-radius:2px; }
+    .pr-srow { padding:5px 16px 9px; }
+    .pr-stop { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:4px; }
+    .pr-slbl { font-size:11px; color:var(--txt2); line-height:1.3; }
+    .pr-slbl small { display:block; font-family:var(--mono); font-size:8px; color:var(--txt3); margin-top:1px; }
+    .pr-sval { font-family:var(--mono); font-size:12px; font-weight:500; color:var(--acc); min-width:65px; text-align:right; }
+    .pr-sl {
+      -webkit-appearance:none; appearance:none; width:100%; height:3px;
+      background:var(--bdr2); border-radius:2px; outline:none; cursor:pointer; accent-color:var(--acc);
+    }
+    .pr-sl::-webkit-slider-thumb {
+      -webkit-appearance:none; width:13px; height:13px; border-radius:50%;
+      background:var(--acc); cursor:pointer; box-shadow:0 0 6px rgba(79,142,247,.45);
+    }
+    .pr-context-box {
+      margin:8px 16px; padding:9px 11px;
+      background:rgba(79,142,247,.05); border:1px solid rgba(79,142,247,.15);
+      border-radius:var(--radius); font-family:var(--mono); font-size:9px; color:var(--txt2); line-height:1.7;
+    }
+    .pr-context-box b { color:var(--acc2); }
+
+    /* Panel derecho */
+    .pr-right { flex:1; overflow-y:auto; background:var(--bg); padding:18px 22px 40px; }
+
+    /* KPIs */
+    .pr-kpis { display:grid; grid-template-columns:repeat(5,1fr); gap:1px;
+      background:var(--bdr); border:1px solid var(--bdr); border-radius:var(--radius);
+      overflow:hidden; margin-bottom:14px; }
+    .pr-kpi { background:var(--surf); padding:12px 14px; position:relative; }
+    .pr-kpi::before { content:''; position:absolute; top:0; left:0; right:0; height:2px;
+      background:var(--kc,var(--acc)); opacity:.6; }
+    .pr-kl { font-family:var(--mono); font-size:8px; color:var(--txt3); text-transform:uppercase;
+      letter-spacing:.09em; margin-bottom:5px; line-height:1.35; }
+    .pr-kv { font-family:var(--mono); font-size:18px; font-weight:500; color:var(--txt); line-height:1; }
+    .pr-ks { font-family:var(--mono); font-size:9px; margin-top:3px; color:var(--txt3); }
+
+    /* Semáforo */
+    .pr-sem-wrap { background:var(--surf); border:1px solid var(--bdr); border-radius:var(--radius);
+      padding:12px 16px; margin-bottom:14px; }
+    .pr-sem-title { font-family:var(--mono); font-size:9px; color:var(--txt3); text-transform:uppercase;
+      letter-spacing:.1em; margin-bottom:9px; display:flex; align-items:center; gap:5px; }
+    .pr-sem-title::before { content:''; display:inline-block; width:3px; height:9px;
+      background:var(--orange); border-radius:2px; }
+    .pr-sem-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:6px; }
+    .pr-sem-item { background:var(--bg); border:1px solid var(--bdr); border-radius:3px;
+      padding:7px 9px; display:flex; align-items:center; gap:7px; }
+    .pr-sem-dot { font-size:11px; flex-shrink:0; }
+    .pr-sem-lbl { font-family:var(--mono); font-size:8px; color:var(--txt3); margin-bottom:2px; }
+    .pr-sem-val { font-family:var(--mono); font-size:11px; font-weight:500; }
+
+    /* Charts */
+    .pr-charts { display:grid; grid-template-columns:1fr 1fr; gap:1px;
+      background:var(--bdr); border:1px solid var(--bdr); border-radius:var(--radius);
+      overflow:hidden; margin-bottom:14px; }
+    .pr-cbox { background:var(--surf); padding:14px 16px; }
+    .pr-ctitle { font-family:var(--mono); font-size:9px; color:var(--txt3);
+      text-transform:uppercase; letter-spacing:.09em; margin-bottom:10px; }
+    .pr-cwrap { position:relative; height:140px; }
+
+    /* Tabla vencimientos */
+    .pr-tvenc { background:var(--surf); border:1px solid var(--bdr); border-radius:var(--radius);
+      overflow:hidden; margin-bottom:14px; }
+    .pr-tvenc-head { padding:11px 16px; border-bottom:1px solid var(--bdr);
+      display:flex; align-items:center; justify-content:space-between; }
+    .pr-tvenc-title { font-family:var(--mono); font-size:9px; color:var(--txt3);
+      text-transform:uppercase; letter-spacing:.09em; display:flex; align-items:center; gap:5px; }
+    .pr-tvenc-title::before { content:''; display:inline-block; width:3px; height:9px;
+      background:var(--red); border-radius:2px; }
+    .pr-t { width:100%; border-collapse:collapse; font-family:var(--mono); font-size:10px; }
+    .pr-t th { padding:5px 10px; text-align:right; color:var(--txt3); font-size:8px; font-weight:400;
+      text-transform:uppercase; letter-spacing:.06em; border-bottom:1px solid var(--bdr); }
+    .pr-t th:first-child { text-align:left; }
+    .pr-t td { padding:7px 10px; text-align:right; border-bottom:1px solid rgba(28,32,53,.55); }
+    .pr-t td:first-child { text-align:left; color:var(--txt2); }
+    .pr-t tr:last-child td { border-bottom:none; }
+    .pr-t tr:hover td { background:rgba(79,142,247,.025); }
+    .c-ok { color:var(--green) !important; } .c-warn { color:var(--orange) !important; }
+    .c-stress { color:var(--red) !important; font-weight:500; }
+
+    /* Supuestos */
+    .pr-sup { background:var(--surf); border:1px solid var(--bdr); border-radius:var(--radius);
+      padding:12px 16px; margin-bottom:14px; }
+    .pr-sup-title { font-family:var(--mono); font-size:9px; color:var(--txt3);
+      text-transform:uppercase; letter-spacing:.1em; margin-bottom:8px; }
+    .pr-sup-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:6px; }
+    .pr-sup-item { background:var(--bg); border:1px solid var(--bdr); border-radius:3px; padding:7px 9px; }
+    .pr-sup-k { font-family:var(--mono); font-size:8px; color:var(--txt3); margin-bottom:2px; }
+    .pr-sup-v { font-family:var(--mono); font-size:11px; color:var(--acc2); font-weight:500; }
+
+    .pr-disc { font-family:var(--mono); font-size:9px; color:var(--txt3);
+      border:1px solid var(--bdr); border-radius:var(--radius); padding:9px 13px; line-height:1.8; }
+
+    @media(max-width:1050px){
+      .pr-wrap { flex-direction:column; height:auto; }
+      .pr-left { width:100%; max-height:45vh; }
+      .pr-kpis { grid-template-columns:1fr 1fr 1fr; }
+      .pr-charts { grid-template-columns:1fr; }
+    }
+
+    /* Tabs A/B */
+    .pr-tab {
+      flex:1; padding:9px 0; font-family:var(--mono); font-size:11px; font-weight:500;
+      background:transparent; border:none; color:var(--txt3); cursor:pointer;
+      border-bottom:2px solid transparent; transition:all .15s;
+    }
+    .pr-tab.active { color:var(--acc); border-bottom-color:var(--acc); background:rgba(79,142,247,.05); }
+    .pr-tab:hover:not(.active) { color:var(--txt2); background:var(--surf2); }
+
+    /* KPI triple */
+    .pr-kpis3 {
+      display:grid; grid-template-columns:180px repeat(3,1fr); gap:1px;
+      background:var(--bdr); border:1px solid var(--bdr); border-radius:var(--radius);
+      overflow:hidden; margin-bottom:14px;
+    }
+    .pr-kpi3-hdr {
+      background:var(--bg); padding:8px 12px;
+      font-family:var(--mono); font-size:9px; font-weight:500; text-transform:uppercase;
+      letter-spacing:.08em; text-align:center;
+    }
+    .pr-kpi3-lbl {
+      background:var(--surf); padding:9px 12px;
+      font-family:var(--mono); font-size:9px; color:var(--txt2);
+      display:flex; align-items:center;
+    }
+    .pr-kpi3-v {
+      background:var(--surf); padding:9px 12px; text-align:center;
+      font-family:var(--mono); font-size:13px; font-weight:500; color:var(--txt);
+      display:flex; align-items:center; justify-content:center;
+    }
+    .pr-kpi3-v.up { color:var(--green); }
+    .pr-kpi3-v.dn { color:var(--red); }
+    .pr-kpi3-v.neu { color:var(--orange); }
+    </style>
+
+    <div class="pr-wrap">
+
+      <!-- ── PANEL IZQUIERDO ── -->
+      <div class="pr-left">
+        <div class="pr-left-head">
+          <div>
+            <h2>Macro Predictor</h2>
+            <div class="pr-sub-note">Argentina · 2026 · Dual escenario + Media</div>
+          </div>
+          <button class="pr-reset" onclick="prReset()">↺ Reset</button>
+        </div>
+
+        <!-- Tabs A / B -->
+        <div style="display:flex;border-bottom:1px solid var(--bdr)">
+          <button class="pr-tab active" id="pr-tab-a" onclick="prSwitchTab('a')">
+            🅐 Escenario A
+          </button>
+          <button class="pr-tab" id="pr-tab-b" onclick="prSwitchTab('b')">
+            🅑 Escenario B
+          </button>
+        </div>
+
+        <!-- Quick presets por tab -->
+        <div class="pr-sc-bar" id="pr-preset-a">
+          <span style="font-family:var(--mono);font-size:9px;color:var(--txt3);margin-right:2px">PRESET A:</span>
+          <button class="pr-sc s-bear" onclick="prLoadPreset('a','stress')">🔴 Stress</button>
+          <button class="pr-sc active" id="pr-sc-a-base" onclick="prLoadPreset('a','base')">⚪ Base</button>
+          <button class="pr-sc s-bull" onclick="prLoadPreset('a','bull')">🟢 Bull</button>
+        </div>
+        <div class="pr-sc-bar" id="pr-preset-b" style="display:none">
+          <span style="font-family:var(--mono);font-size:9px;color:var(--txt3);margin-right:2px">PRESET B:</span>
+          <button class="pr-sc s-bear" onclick="prLoadPreset('b','stress')">🔴 Stress</button>
+          <button class="pr-sc" onclick="prLoadPreset('b','base')">⚪ Base</button>
+          <button class="pr-sc s-bull active" id="pr-sc-b-bull" onclick="prLoadPreset('b','bull')">🟢 Bull</button>
+        </div>
+
+        <!-- Contexto fijo -->
+        <div class="pr-group">
+          <div class="pr-gtitle" style="--gc:var(--gold)">Contexto fijo 2026</div>
+          <div class="pr-context-box">
+            <b>Post-legislativas oct-2025:</b> LLA mejoró posición, mayor gobernabilidad.<br>
+            <b>Cepo:</b> Levantado abr-2025. Banda cambiaria activa, crawl indexado al IPC.<br>
+            <b>FMI EFF:</b> 48m / USD 20B. Reservas netas negativas (~−$2B).<br>
+            <b>Hoy:</b> RP ~631bps · TC ~$1.390 · IPC ~2.9%/mes
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">Reservas brutas (live BCRA)</span><span class="pr-sval" id="pv-res-live">…</span></div>
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">TC mayorista (live)</span><span class="pr-sval" id="pv-tc-live">…</span></div>
+          </div>
+        </div>
+
+        <!-- PBI + Base Monetaria — COMPARTIDO entre A y B -->
+        <div class="pr-group">
+          <div class="pr-gtitle" style="--gc:var(--acc2)">PBI y Base Monetaria · Compartido</div>
+          <div class="pr-context-box">
+            El crecimiento del PBI afecta: <b>demanda de importaciones, recaudación fiscal, demanda de pesos y multiplicador monetario.</b>
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">Crecimiento PBI 2026<small>FMI proyecta +4.5% · Consenso ~+3.5%</small></span><span class="pr-sval" id="pv-pbi">+3.5%</span></div>
+            <input type="range" class="pr-sl" id="ps-pbi" min="-5" max="10" step="0.5" value="3.5" oninput="prCalc()">
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">Base monetaria actual (M ARS)<small>Dato BCRA live</small></span><span class="pr-sval" id="pv-bm-live">…</span></div>
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">Expansión BM por remonetización<small>PBI + demanda pesos — política BCRA</small></span><span class="pr-sval" id="pv-bm-exp">+2.0%</span></div>
+            <input type="range" class="pr-sl" id="ps-bm-exp" min="-5" max="15" step="0.5" value="2" oninput="prCalc()">
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">Multiplicador monetario (M3/Base)<small>Expansión crédito bancario</small></span><span class="pr-sval" id="pv-mult">x3.5</span></div>
+            <input type="range" class="pr-sl" id="ps-mult" min="1.5" max="6" step="0.1" value="3.5" oninput="prCalc()">
+          </div>
+        </div>
+
+        <!-- SLIDERS POR ESCENARIO — se muestran/ocultan por tab -->
+        <div id="pr-sliders-a">
+
+        <div class="pr-group">
+          <div class="pr-gtitle" style="--gc:var(--acc)">🅐 Ingresos Divisas (USD B/año)</div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">Exportaciones agro</span><span class="pr-sval" id="pv-a-agro">$34.5B</span></div>
+            <input type="range" class="pr-sl" id="ps-a-agro" min="22" max="52" step="0.5" value="34.5" oninput="prCalc()">
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">Exportaciones energía / VM</span><span class="pr-sval" id="pv-a-en">$18.0B</span></div>
+            <input type="range" class="pr-sl" id="ps-a-en" min="3" max="30" step="0.5" value="18" oninput="prCalc()">
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">Minería (oro/plata/litio/cobre)<small>+27% en 2025 · boom RIGI</small></span><span class="pr-sval" id="pv-a-min">$7.0B</span></div>
+            <input type="range" class="pr-sl" id="ps-a-min" min="3" max="18" step="0.5" value="7" oninput="prCalc()">
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">Industria + SBC + turismo<small>Automotriz, software, carnes, pesca</small></span><span class="pr-sval" id="pv-a-ind">$22.0B</span></div>
+            <input type="range" class="pr-sl" id="ps-a-ind" min="12" max="38" step="0.5" value="22" oninput="prCalc()">
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">Importaciones CIF</span><span class="pr-sval" id="pv-a-imp">$60.0B</span></div>
+            <input type="range" class="pr-sl" id="ps-a-imp" min="40" max="95" step="1" value="60" oninput="prCalc()">
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">FMI + multilaterales (desembolsos)</span><span class="pr-sval" id="pv-a-fmi">$5.0B</span></div>
+            <input type="range" class="pr-sl" id="ps-a-fmi" min="0" max="15" step="0.5" value="5" oninput="prCalc()">
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">Acceso mercado internacional</span><span class="pr-sval" id="pv-a-mkt">$0.0B</span></div>
+            <input type="range" class="pr-sl" id="ps-a-mkt" min="0" max="15" step="0.5" value="0" oninput="prCalc()">
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">Shock externo (commodities/aranceles)</span><span class="pr-sval" id="pv-a-shock">-5%</span></div>
+            <input type="range" class="pr-sl" id="ps-a-shock" min="-30" max="20" step="5" value="-5" oninput="prCalc()">
+          </div>
+        </div>
+
+        <div class="pr-group">
+          <div class="pr-gtitle" style="--gc:var(--red)">🅐 Vencimientos USD</div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">Bonos soberanos 2026<small>Ene+Jul ~$8.4B</small></span><span class="pr-sval" id="pv-a-vb">$8.4B</span></div>
+            <input type="range" class="pr-sl" id="ps-a-vb" min="5" max="12" step="0.1" value="8.4" oninput="prCalc()">
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">FMI capital+intereses 2026</span><span class="pr-sval" id="pv-a-vf">$4.5B</span></div>
+            <input type="range" class="pr-sl" id="ps-a-vf" min="2" max="8" step="0.1" value="4.5" oninput="prCalc()">
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">Multilaterales neto</span><span class="pr-sval" id="pv-a-vm">$3.5B</span></div>
+            <input type="range" class="pr-sl" id="ps-a-vm" min="1" max="7" step="0.1" value="3.5" oninput="prCalc()">
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">% rollover multilaterales</span><span class="pr-sval" id="pv-a-rm">90%</span></div>
+            <input type="range" class="pr-sl" id="ps-a-rm" min="50" max="100" step="5" value="90" oninput="prCalc()">
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">% rollover bonos privados</span><span class="pr-sval" id="pv-a-rb">0%</span></div>
+            <input type="range" class="pr-sl" id="ps-a-rb" min="0" max="100" step="5" value="0" oninput="prCalc()">
+          </div>
+        </div>
+
+        <div class="pr-group">
+          <div class="pr-gtitle" style="--gc:var(--gold)">🅐 TC, Tasas y Política</div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">Crawl mensual</span><span class="pr-sval" id="pv-a-crawl">2.9%</span></div>
+            <input type="range" class="pr-sl" id="ps-a-crawl" min="0" max="8" step="0.1" value="2.9" oninput="prCalc()">
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">Presión dolarización</span><span class="pr-sval" id="pv-a-bdpres">25%</span></div>
+            <input type="range" class="pr-sl" id="ps-a-bdpres" min="0" max="100" step="5" value="25" oninput="prCalc()">
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">BADLAR TNA</span><span class="pr-sval" id="pv-a-badlar">28%</span></div>
+            <input type="range" class="pr-sl" id="ps-a-badlar" min="10" max="80" step="1" value="28" oninput="prCalc()">
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">IPC mensual</span><span class="pr-sval" id="pv-a-ipc">2.9%</span></div>
+            <input type="range" class="pr-sl" id="ps-a-ipc" min="0.5" max="12" step="0.1" value="2.9" oninput="prCalc()">
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">Riesgo país (bps)</span><span class="pr-sval" id="pv-a-rp">630</span></div>
+            <input type="range" class="pr-sl" id="ps-a-rp" min="200" max="2500" step="50" value="630" oninput="prCalc()">
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">Credibilidad programa</span><span class="pr-sval" id="pv-a-cred">40%</span></div>
+            <input type="range" class="pr-sl" id="ps-a-cred" min="0" max="100" step="5" value="40" oninput="prCalc()">
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">Riesgo electoral 2027</span><span class="pr-sval" id="pv-a-elec">55%</span></div>
+            <input type="range" class="pr-sl" id="ps-a-elec" min="0" max="100" step="5" value="55" oninput="prCalc()">
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">Superávit fiscal (% PBI)</span><span class="pr-sval" id="pv-a-fis">1.5%</span></div>
+            <input type="range" class="pr-sl" id="ps-a-fis" min="-2" max="4" step="0.1" value="1.5" oninput="prCalc()">
+          </div>
+        </div>
+
+        </div><!-- /pr-sliders-a -->
+
+        <!-- SLIDERS ESCENARIO B -->
+        <div id="pr-sliders-b" style="display:none">
+
+        <div class="pr-group">
+          <div class="pr-gtitle" style="--gc:var(--green)">🅑 Ingresos Divisas (USD B/año)</div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">Exportaciones agro</span><span class="pr-sval" id="pv-b-agro">$40.0B</span></div>
+            <input type="range" class="pr-sl" id="ps-b-agro" min="22" max="52" step="0.5" value="40" oninput="prCalc()">
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">Exportaciones energía / VM</span><span class="pr-sval" id="pv-b-en">$22.0B</span></div>
+            <input type="range" class="pr-sl" id="ps-b-en" min="3" max="30" step="0.5" value="22" oninput="prCalc()">
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">Minería</span><span class="pr-sval" id="pv-b-min">$9.0B</span></div>
+            <input type="range" class="pr-sl" id="ps-b-min" min="3" max="18" step="0.5" value="9" oninput="prCalc()">
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">Industria + SBC + turismo</span><span class="pr-sval" id="pv-b-ind">$28.0B</span></div>
+            <input type="range" class="pr-sl" id="ps-b-ind" min="12" max="38" step="0.5" value="28" oninput="prCalc()">
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">Importaciones CIF</span><span class="pr-sval" id="pv-b-imp">$68.0B</span></div>
+            <input type="range" class="pr-sl" id="ps-b-imp" min="40" max="95" step="1" value="68" oninput="prCalc()">
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">FMI + multilaterales (desembolsos)</span><span class="pr-sval" id="pv-b-fmi">$8.0B</span></div>
+            <input type="range" class="pr-sl" id="ps-b-fmi" min="0" max="15" step="0.5" value="8" oninput="prCalc()">
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">Acceso mercado internacional</span><span class="pr-sval" id="pv-b-mkt">$3.0B</span></div>
+            <input type="range" class="pr-sl" id="ps-b-mkt" min="0" max="15" step="0.5" value="3" oninput="prCalc()">
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">Shock externo</span><span class="pr-sval" id="pv-b-shock">+5%</span></div>
+            <input type="range" class="pr-sl" id="ps-b-shock" min="-30" max="20" step="5" value="5" oninput="prCalc()">
+          </div>
+        </div>
+
+        <div class="pr-group">
+          <div class="pr-gtitle" style="--gc:var(--red)">🅑 Vencimientos USD</div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">Bonos soberanos 2026</span><span class="pr-sval" id="pv-b-vb">$8.4B</span></div>
+            <input type="range" class="pr-sl" id="ps-b-vb" min="5" max="12" step="0.1" value="8.4" oninput="prCalc()">
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">FMI capital+intereses 2026</span><span class="pr-sval" id="pv-b-vf">$4.5B</span></div>
+            <input type="range" class="pr-sl" id="ps-b-vf" min="2" max="8" step="0.1" value="4.5" oninput="prCalc()">
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">Multilaterales neto</span><span class="pr-sval" id="pv-b-vm">$3.5B</span></div>
+            <input type="range" class="pr-sl" id="ps-b-vm" min="1" max="7" step="0.1" value="3.5" oninput="prCalc()">
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">% rollover multilaterales</span><span class="pr-sval" id="pv-b-rm">100%</span></div>
+            <input type="range" class="pr-sl" id="ps-b-rm" min="50" max="100" step="5" value="100" oninput="prCalc()">
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">% rollover bonos privados</span><span class="pr-sval" id="pv-b-rb">40%</span></div>
+            <input type="range" class="pr-sl" id="ps-b-rb" min="0" max="100" step="5" value="40" oninput="prCalc()">
+          </div>
+        </div>
+
+        <div class="pr-group">
+          <div class="pr-gtitle" style="--gc:var(--green)">🅑 TC, Tasas y Política</div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">Crawl mensual</span><span class="pr-sval" id="pv-b-crawl">2.0%</span></div>
+            <input type="range" class="pr-sl" id="ps-b-crawl" min="0" max="8" step="0.1" value="2" oninput="prCalc()">
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">Presión dolarización</span><span class="pr-sval" id="pv-b-bdpres">10%</span></div>
+            <input type="range" class="pr-sl" id="ps-b-bdpres" min="0" max="100" step="5" value="10" oninput="prCalc()">
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">BADLAR TNA</span><span class="pr-sval" id="pv-b-badlar">24%</span></div>
+            <input type="range" class="pr-sl" id="ps-b-badlar" min="10" max="80" step="1" value="24" oninput="prCalc()">
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">IPC mensual</span><span class="pr-sval" id="pv-b-ipc">2.0%</span></div>
+            <input type="range" class="pr-sl" id="ps-b-ipc" min="0.5" max="12" step="0.1" value="2" oninput="prCalc()">
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">Riesgo país (bps)</span><span class="pr-sval" id="pv-b-rp">450</span></div>
+            <input type="range" class="pr-sl" id="ps-b-rp" min="200" max="2500" step="50" value="450" oninput="prCalc()">
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">Credibilidad programa</span><span class="pr-sval" id="pv-b-cred">70%</span></div>
+            <input type="range" class="pr-sl" id="ps-b-cred" min="0" max="100" step="5" value="70" oninput="prCalc()">
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">Riesgo electoral 2027</span><span class="pr-sval" id="pv-b-elec">30%</span></div>
+            <input type="range" class="pr-sl" id="ps-b-elec" min="0" max="100" step="5" value="30" oninput="prCalc()">
+          </div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">Superávit fiscal (% PBI)</span><span class="pr-sval" id="pv-b-fis">2.0%</span></div>
+            <input type="range" class="pr-sl" id="ps-b-fis" min="-2" max="4" step="0.1" value="2" oninput="prCalc()">
+          </div>
+        </div>
+
+        </div><!-- /pr-sliders-b -->
+
+        <!-- Horizonte — compartido -->
+        <div class="pr-group" style="border-bottom:none">
+          <div class="pr-gtitle" style="--gc:var(--acc2)">Horizonte · Compartido</div>
+          <div class="pr-srow">
+            <div class="pr-stop"><span class="pr-slbl">Meses a proyectar</span><span class="pr-sval" id="pv-hor">12m</span></div>
+            <input type="range" class="pr-sl" id="ps-hor" min="3" max="30" step="3" value="12" oninput="prCalc()">
+          </div>
+        </div>
+      </div><!-- /pr-left -->
+
+      <!-- ── PANEL DERECHO ── -->
+      <div class="pr-right">
+
+        <!-- Badges A / Media / B -->
+        <div style="display:flex;gap:6px;margin-bottom:12px;align-items:center">
+          <span style="font-family:var(--mono);font-size:9px;color:var(--txt3);text-transform:uppercase;letter-spacing:.1em">Resultados:</span>
+          <span style="font-family:var(--mono);font-size:10px;padding:3px 9px;border-radius:3px;background:rgba(240,80,80,.12);color:var(--red);border:1px solid rgba(240,80,80,.25)">🅐 Escenario A</span>
+          <span style="font-family:var(--mono);font-size:10px;padding:3px 9px;border-radius:3px;background:rgba(201,149,42,.1);color:var(--gold2);border:1px solid rgba(201,149,42,.25)">⊕ Media</span>
+          <span style="font-family:var(--mono);font-size:10px;padding:3px 9px;border-radius:3px;background:rgba(52,200,122,.1);color:var(--green);border:1px solid rgba(52,200,122,.25)">🅑 Escenario B</span>
+        </div>
+
+        <!-- KPIs triple -->
+        <div class="pr-kpis3">
+          <div class="pr-kpi3-hdr"></div>
+          <div class="pr-kpi3-hdr" style="color:var(--red)">🅐 Escenario A</div>
+          <div class="pr-kpi3-hdr" style="color:var(--gold2)">⊕ Media</div>
+          <div class="pr-kpi3-hdr" style="color:var(--green)">🅑 Escenario B</div>
+
+          <div class="pr-kpi3-lbl">Reservas brutas fin</div>
+          <div class="pr-kpi3-v" id="pr-a-rb">—</div>
+          <div class="pr-kpi3-v" id="pr-m-rb">—</div>
+          <div class="pr-kpi3-v" id="pr-b-rb">—</div>
+
+          <div class="pr-kpi3-lbl">Reservas netas fin</div>
+          <div class="pr-kpi3-v" id="pr-a-rn">—</div>
+          <div class="pr-kpi3-v" id="pr-m-rn">—</div>
+          <div class="pr-kpi3-v" id="pr-b-rn">—</div>
+
+          <div class="pr-kpi3-lbl">TC Mayorista fin</div>
+          <div class="pr-kpi3-v" id="pr-a-tc">—</div>
+          <div class="pr-kpi3-v" id="pr-m-tc">—</div>
+          <div class="pr-kpi3-v" id="pr-b-tc">—</div>
+
+          <div class="pr-kpi3-lbl">Tasa real (BADLAR/12−IPC)</div>
+          <div class="pr-kpi3-v" id="pr-a-tr">—</div>
+          <div class="pr-kpi3-v" id="pr-m-tr">—</div>
+          <div class="pr-kpi3-v" id="pr-b-tr">—</div>
+
+          <div class="pr-kpi3-lbl">Flujo neto divs/mes</div>
+          <div class="pr-kpi3-v" id="pr-a-fl">—</div>
+          <div class="pr-kpi3-v" id="pr-m-fl">—</div>
+          <div class="pr-kpi3-v" id="pr-b-fl">—</div>
+
+          <div class="pr-kpi3-lbl">Base monetaria fin</div>
+          <div class="pr-kpi3-v" id="pr-a-bm">—</div>
+          <div class="pr-kpi3-v" id="pr-m-bm">—</div>
+          <div class="pr-kpi3-v" id="pr-b-bm">—</div>
+
+          <div class="pr-kpi3-lbl">M3 estimado fin</div>
+          <div class="pr-kpi3-v" id="pr-a-m3">—</div>
+          <div class="pr-kpi3-v" id="pr-m-m3">—</div>
+          <div class="pr-kpi3-v" id="pr-b-m3">—</div>
+
+          <div class="pr-kpi3-lbl">TC equilibrio (M3/Res)</div>
+          <div class="pr-kpi3-v" id="pr-a-tceq">—</div>
+          <div class="pr-kpi3-v" id="pr-m-tceq">—</div>
+          <div class="pr-kpi3-v" id="pr-b-tceq">—</div>
+        </div>
+
+        <!-- Semáforo -->
+        <div class="pr-sem-wrap">
+          <div class="pr-sem-title">Semáforo de riesgo externo · Media de escenarios</div>
+          <div class="pr-sem-grid" id="pr-semaforo"></div>
+        </div>
+
+        <!-- Gráficos: 6 charts con 3 líneas cada uno -->
+        <div class="pr-charts">
+          <div class="pr-cbox">
+            <div class="pr-ctitle">Reservas brutas (MUSD)</div>
+            <div class="pr-cwrap"><canvas id="pr-ch-res"></canvas></div>
+          </div>
+          <div class="pr-cbox">
+            <div class="pr-ctitle">TC Mayorista (ARS/USD)</div>
+            <div class="pr-cwrap"><canvas id="pr-ch-tc"></canvas></div>
+          </div>
+          <div class="pr-cbox">
+            <div class="pr-ctitle">Base Monetaria proyectada (M ARS)</div>
+            <div class="pr-cwrap"><canvas id="pr-ch-bm"></canvas></div>
+          </div>
+          <div class="pr-cbox">
+            <div class="pr-ctitle">TC Equilibrio M3/Reservas (ARS/USD)</div>
+            <div class="pr-cwrap"><canvas id="pr-ch-tceq"></canvas></div>
+          </div>
+          <div class="pr-cbox">
+            <div class="pr-ctitle">Flujo neto divisas (MUSD/mes)</div>
+            <div class="pr-cwrap"><canvas id="pr-ch-flujo"></canvas></div>
+          </div>
+          <div class="pr-cbox">
+            <div class="pr-ctitle">Tasa real mensual (BADLAR/12 − IPC)</div>
+            <div class="pr-cwrap"><canvas id="pr-ch-tasa"></canvas></div>
+          </div>
+        </div>
+
+        <!-- Tabla vencimientos -->
+        <div class="pr-tvenc">
+          <div class="pr-tvenc-head">
+            <span class="pr-tvenc-title">Perfil de vencimientos USD 2026 — flujo bajo escenario A vs B</span>
+            <span style="font-family:var(--mono);font-size:9px;color:var(--txt3)">Finanzas · 1816 · Quantum · Infobae</span>
+          </div>
+          <div style="overflow-x:auto">
+            <table class="pr-t">
+              <thead><tr>
+                <th>Período</th><th>Vence</th><th>Roll.</th>
+                <th>Pago neto</th><th>Ingr. A</th><th>Flujo A</th>
+                <th>Ingr. B</th><th>Flujo B</th><th>Estado</th>
+              </tr></thead>
+              <tbody id="pr-vtbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Supuestos -->
+        <div class="pr-sup">
+          <div class="pr-sup-title">Supuestos activos · Escenario A vs B</div>
+          <div class="pr-sup-grid" id="pr-supgrid"></div>
+        </div>
+
+        <div class="pr-disc">
+          <b>METODOLOGÍA DUAL:</b> Cada escenario corre el modelo de flujo de caja en divisas de forma independiente. La Media es la media aritmética de ambos resultados. Base Monetaria: BM_t = BM_0 × (1 + expansión_mensual)^t, donde expansión_mensual = (PBI_anual/12) × factor_remonetización + BADLAR/1200. M3 estimado = BM × multiplicador. TC equilibrio monetario = M3 (M ARS) / Reservas (MUSD). Las importaciones se ajustan por PBI: mayor crecimiento → más importaciones (elasticidad ~1.2). Uso interno LDWM · No constituye asesoramiento de inversión.
+        </div>
+
+      </div><!-- /pr-right -->
+    </div><!-- /pr-wrap -->
+    </div><!-- /page-predictor -->
+
+    <!-- ══════════════════════════════════════════════════════
+         MONITOR ECONOMÍA EEUU · API FRED
+    ══════════════════════════════════════════════════════ -->
+    <div id="page-usmonitor" class="page">
+    <style>
+    /* ── US MONITOR ── */
+    .us-wrap { padding: 0; }
+    .us-topbar {
+      display:flex; align-items:center; justify-content:space-between;
+      padding:12px 28px; border-bottom:1px solid var(--bdr);
+      background:var(--surf); flex-wrap:wrap; gap:10px;
+    }
+    .us-topbar-left h1 { font-family:var(--serif); font-size:20px; font-style:italic; }
+    .us-topbar-left small { font-family:var(--mono); font-size:9px; color:var(--txt3); }
+    .us-apikey-row {
+      display:flex; align-items:center; gap:8px;
+    }
+    .us-key-input {
+      background:var(--bg); color:var(--txt); border:1px solid var(--bdr2);
+      font-family:var(--mono); font-size:11px; padding:6px 10px;
+      border-radius:var(--radius); width:260px;
+    }
+    .us-key-input:focus { outline:1px solid var(--acc); border-color:var(--acc); }
+    .us-btn {
+      font-family:var(--mono); font-size:10px; padding:6px 12px;
+      border:1px solid var(--acc); background:rgba(79,142,247,.1); color:var(--acc);
+      border-radius:var(--radius); cursor:pointer; transition:all .15s;
+      display:flex; align-items:center; gap:5px;
+    }
+    .us-btn:hover { background:rgba(79,142,247,.2); }
+    .us-btn.loading { opacity:.5; pointer-events:none; }
+    .us-btn-sm {
+      font-family:var(--mono); font-size:9px; padding:4px 9px;
+      border:1px solid var(--bdr2); background:transparent; color:var(--txt3);
+      border-radius:var(--radius); cursor:pointer; transition:all .15s;
+    }
+    .us-btn-sm:hover { border-color:var(--acc); color:var(--acc); }
+    .us-key-note { font-family:var(--mono); font-size:9px; color:var(--txt3); }
+    .us-key-note a { color:var(--acc); text-decoration:none; }
+
+    /* API key prompt */
+    .us-prompt {
+      max-width:500px; margin:60px auto; text-align:center;
+      background:var(--surf); border:1px solid var(--bdr2); border-radius:var(--radius);
+      padding:32px 28px;
+    }
+    .us-prompt h2 { font-family:var(--serif); font-size:22px; font-style:italic; margin-bottom:10px; }
+    .us-prompt p { font-size:13px; color:var(--txt2); margin-bottom:20px; line-height:1.6; }
+    .us-prompt-input {
+      width:100%; background:var(--bg); color:var(--txt);
+      border:1px solid var(--bdr2); font-family:var(--mono); font-size:12px;
+      padding:10px 14px; border-radius:var(--radius); margin-bottom:12px;
+    }
+    .us-prompt-input:focus { outline:1px solid var(--acc); border-color:var(--acc); }
+    .us-prompt-btn {
+      width:100%; padding:10px; font-family:var(--mono); font-size:12px;
+      background:rgba(79,142,247,.15); border:1px solid var(--acc); color:var(--acc);
+      border-radius:var(--radius); cursor:pointer; transition:all .2s;
+    }
+    .us-prompt-btn:hover { background:rgba(79,142,247,.25); }
+    .us-prompt-link { font-family:var(--mono); font-size:10px; color:var(--txt3); margin-top:10px; }
+    .us-prompt-link a { color:var(--acc); text-decoration:none; }
+
+    /* Body */
+    .us-body { padding:20px 28px 48px; }
+
+    /* Section header */
+    .us-sec {
+      display:flex; align-items:center; gap:10px; margin:24px 0 12px;
+    }
+    .us-sec-tag {
+      font-family:var(--mono); font-size:9px; letter-spacing:.12em; text-transform:uppercase;
+      padding:2px 8px; border-radius:3px;
+      border:1px solid rgba(79,142,247,.25); background:rgba(79,142,247,.06); color:var(--acc2);
+    }
+    .us-sec-tag.red    { border-color:rgba(240,80,80,.25); background:rgba(240,80,80,.06); color:var(--red); }
+    .us-sec-tag.green  { border-color:rgba(52,200,122,.25); background:rgba(52,200,122,.06); color:var(--green); }
+    .us-sec-tag.gold   { border-color:rgba(201,149,42,.25); background:rgba(201,149,42,.07); color:var(--gold2); }
+    .us-sec-tag.orange { border-color:rgba(240,144,48,.25); background:rgba(240,144,48,.06); color:var(--orange); }
+    .us-sec-line { flex:1; height:1px; background:var(--bdr); }
+    .us-sec-ts   { font-family:var(--mono); font-size:9px; color:var(--txt3); }
+
+    /* KPI grid */
+    .us-kpi-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(170px,1fr)); gap:1px; background:var(--bdr); border:1px solid var(--bdr); border-radius:var(--radius); overflow:hidden; }
+    .us-kpi { background:var(--surf); padding:14px 16px; position:relative; }
+    .us-kpi::before { content:''; position:absolute; top:0; left:0; right:0; height:2px; background:var(--ukc,var(--acc)); opacity:.65; }
+    .us-kpi-l { font-family:var(--mono); font-size:8px; color:var(--txt3); text-transform:uppercase; letter-spacing:.1em; margin-bottom:6px; line-height:1.4; }
+    .us-kpi-v { font-family:var(--mono); font-size:20px; font-weight:500; color:var(--txt); line-height:1; }
+    .us-kpi-v.loading { background:var(--bdr2); color:transparent; border-radius:3px; animation:usshim 1.5s ease infinite; }
+    .us-kpi-s { font-family:var(--mono); font-size:9px; color:var(--txt3); margin-top:4px; }
+    .us-kpi-d { font-family:var(--mono); font-size:8px; color:var(--txt3); margin-top:3px; }
+    @keyframes usshim { 0%,100%{opacity:.3} 50%{opacity:.8} }
+
+    /* Charts */
+    .us-charts { display:grid; grid-template-columns:1fr 1fr; gap:1px; background:var(--bdr); border:1px solid var(--bdr); border-radius:var(--radius); overflow:hidden; margin-bottom:16px; }
+    .us-cbox { background:var(--surf); padding:14px 16px; }
+    .us-chead { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+    .us-ctitle { font-family:var(--mono); font-size:9px; color:var(--txt3); text-transform:uppercase; letter-spacing:.09em; }
+    .us-per-btns { display:flex; gap:3px; }
+    .us-pb { font-family:var(--mono); font-size:8px; padding:2px 5px; border:1px solid var(--bdr2); background:transparent; color:var(--txt3); cursor:pointer; border-radius:2px; transition:all .12s; }
+    .us-pb.active,.us-pb:hover { border-color:var(--acc); color:var(--acc); background:rgba(79,142,247,.07); }
+    .us-cwrap { position:relative; height:150px; }
+
+    /* Yield curve */
+    .us-yc-wrap { background:var(--surf); border:1px solid var(--bdr); border-radius:var(--radius); padding:16px 18px; margin-bottom:16px; }
+    .us-yc-title { font-family:var(--mono); font-size:9px; color:var(--txt3); text-transform:uppercase; letter-spacing:.1em; margin-bottom:12px; }
+
+    /* Tabla comparativa ciclo */
+    .us-cycle-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:10px; margin-bottom:16px; }
+    .us-cycle-card { background:var(--surf); border:1px solid var(--bdr); border-radius:var(--radius); padding:14px 16px; }
+    .us-cc-title { font-family:var(--mono); font-size:9px; color:var(--txt3); text-transform:uppercase; letter-spacing:.1em; margin-bottom:10px; display:flex; align-items:center; gap:5px; }
+    .us-cc-title::before { content:''; display:inline-block; width:3px; height:9px; background:var(--ccc,var(--acc)); border-radius:2px; }
+    .us-cc-val { font-family:var(--mono); font-size:18px; font-weight:500; margin-bottom:4px; }
+    .us-cc-sub { font-family:var(--mono); font-size:9px; color:var(--txt3); line-height:1.6; }
+
+    /* Fed dot plot table */
+    .us-dot-wrap { background:var(--surf); border:1px solid var(--bdr); border-radius:var(--radius); padding:16px 18px; margin-bottom:16px; overflow-x:auto; }
+    .us-dot-title { font-family:var(--mono); font-size:9px; color:var(--txt3); text-transform:uppercase; letter-spacing:.1em; margin-bottom:12px; }
+    .us-dot-tbl { width:100%; border-collapse:collapse; font-family:var(--mono); font-size:10px; }
+    .us-dot-tbl th { padding:5px 10px; text-align:center; color:var(--txt3); font-size:8px; font-weight:400; text-transform:uppercase; letter-spacing:.06em; border-bottom:1px solid var(--bdr); }
+    .us-dot-tbl th:first-child { text-align:left; }
+    .us-dot-tbl td { padding:7px 10px; border-bottom:1px solid rgba(28,32,53,.6); text-align:center; }
+    .us-dot-tbl td:first-child { text-align:left; color:var(--txt2); }
+    .us-dot-tbl tr:last-child td { border-bottom:none; }
+
+    /* Error */
+    .us-err { font-family:var(--mono); font-size:11px; color:var(--red); padding:14px; border:1px solid rgba(240,80,80,.2); background:rgba(240,80,80,.04); border-radius:var(--radius); margin:8px 0; }
+
+    @media(max-width:860px){ .us-charts { grid-template-columns:1fr; } }
+    </style>
+
+    <div class="us-wrap">
+      <!-- Topbar -->
+      <div class="us-topbar">
+        <div class="us-topbar-left">
+          <h1>Monitor Economía EE.UU.</h1>
+          <small>API FRED · St. Louis Fed · Datos oficiales · Última carga: <span id="us-ts">—</span></small>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <div class="us-apikey-row">
+            <input class="us-key-input" id="us-key-input" type="password" placeholder="FRED API Key (32 chars)">
+            <button class="us-btn" id="us-load-btn" onclick="usLoad()">
+              <span id="us-spin" style="display:none">⟳</span>
+              ↻ Cargar
+            </button>
+            <button class="us-btn-sm" onclick="usClearKey()">✕ Limpiar</button>
+          </div>
+          <div class="us-key-note">Key gratuita en <a href="https://fred.stlouisfed.org/docs/api/api_key.html" target="_blank">fred.stlouisfed.org</a></div>
+        </div>
+      </div>
+
+      <!-- Prompt si no hay key -->
+      <div id="us-prompt" style="padding:24px">
+        <div class="us-prompt">
+          <h2>Conectar con FRED</h2>
+          <p>Para acceder a los datos macro de EE.UU. necesitás una API key gratuita del Federal Reserve Bank of St. Louis. El proceso toma menos de 2 minutos y no requiere tarjeta de crédito.</p>
+          <input class="us-prompt-input" id="us-prompt-key" type="text" placeholder="Pegá tu FRED API key aquí (32 caracteres)">
+          <button class="us-prompt-btn" onclick="usSetKey()">Guardar key y cargar datos →</button>
+          <div class="us-prompt-link">
+            Obtener key gratuita: <a href="https://fred.stlouisfed.org/docs/api/api_key.html" target="_blank">fred.stlouisfed.org/docs/api/api_key.html</a>
+          </div>
+        </div>
+      </div>
+
+      <!-- Dashboard (se muestra cuando hay key) -->
+      <div id="us-dashboard" style="display:none">
+        <div class="us-body">
+
+          <!-- KPIs Ciclo Macro -->
+          <div class="us-sec"><span class="us-sec-tag">Ciclo Macro</span><div class="us-sec-line"></div><span class="us-sec-ts" id="us-ts2">—</span></div>
+          <div class="us-kpi-grid">
+            <div class="us-kpi" style="--ukc:var(--acc)">
+              <div class="us-kpi-l">PBI Real (SAAR)<br>GDPC1</div>
+              <div class="us-kpi-v loading" id="us-gdp">—</div>
+              <div class="us-kpi-s">Billones USD · trimestral</div>
+              <div class="us-kpi-d" id="us-gdp-d">—</div>
+            </div>
+            <div class="us-kpi" style="--ukc:var(--acc)">
+              <div class="us-kpi-l">Var. PBI Real QoQ<br>A/A</div>
+              <div class="us-kpi-v loading" id="us-gdpg">—</div>
+              <div class="us-kpi-s">% anualizado</div>
+              <div class="us-kpi-d" id="us-gdpg-d">—</div>
+            </div>
+            <div class="us-kpi" style="--ukc:var(--red)">
+              <div class="us-kpi-l">Desempleo U-3<br>UNRATE</div>
+              <div class="us-kpi-v loading" id="us-unrate">—</div>
+              <div class="us-kpi-s">% mensual</div>
+              <div class="us-kpi-d" id="us-unrate-d">—</div>
+            </div>
+            <div class="us-kpi" style="--ukc:var(--red)">
+              <div class="us-kpi-l">Desempleo U-6<br>U6RATE</div>
+              <div class="us-kpi-v loading" id="us-u6">—</div>
+              <div class="us-kpi-s">% (amplio)</div>
+              <div class="us-kpi-d" id="us-u6-d">—</div>
+            </div>
+            <div class="us-kpi" style="--ukc:var(--orange)">
+              <div class="us-kpi-l">Nómina no-agro<br>PAYEMS</div>
+              <div class="us-kpi-v loading" id="us-payems">—</div>
+              <div class="us-kpi-s">Miles empleos</div>
+              <div class="us-kpi-d" id="us-payems-d">—</div>
+            </div>
+            <div class="us-kpi" style="--ukc:var(--orange)">
+              <div class="us-kpi-l">Prod. Industrial<br>INDPRO</div>
+              <div class="us-kpi-v loading" id="us-indpro">—</div>
+              <div class="us-kpi-s">Índice 2017=100</div>
+              <div class="us-kpi-d" id="us-indpro-d">—</div>
+            </div>
+          </div>
+
+          <!-- KPIs Precios -->
+          <div class="us-sec"><span class="us-sec-tag red">Inflación y Precios</span><div class="us-sec-line"></div></div>
+          <div class="us-kpi-grid">
+            <div class="us-kpi" style="--ukc:var(--red)">
+              <div class="us-kpi-l">CPI YoY<br>CPIAUCSL</div>
+              <div class="us-kpi-v loading" id="us-cpi">—</div>
+              <div class="us-kpi-s">% interanual</div>
+              <div class="us-kpi-d" id="us-cpi-d">—</div>
+            </div>
+            <div class="us-kpi" style="--ukc:var(--red)">
+              <div class="us-kpi-l">CPI Core YoY<br>CPILFESL</div>
+              <div class="us-kpi-v loading" id="us-cpic">—</div>
+              <div class="us-kpi-s">Excluye alimentos/energía</div>
+              <div class="us-kpi-d" id="us-cpic-d">—</div>
+            </div>
+            <div class="us-kpi" style="--ukc:var(--orange)">
+              <div class="us-kpi-l">PCE Core YoY<br>PCEPILFE</div>
+              <div class="us-kpi-v loading" id="us-pce">—</div>
+              <div class="us-kpi-s">Medida preferida Fed</div>
+              <div class="us-kpi-d" id="us-pce-d">—</div>
+            </div>
+            <div class="us-kpi" style="--ukc:var(--acc2)">
+              <div class="us-kpi-l">BEI 10Y<br>T10YIE</div>
+              <div class="us-kpi-v loading" id="us-bei">—</div>
+              <div class="us-kpi-s">Inflación implícita de mercado</div>
+              <div class="us-kpi-d" id="us-bei-d">—</div>
+            </div>
+          </div>
+
+          <!-- KPIs Tasas y Fed -->
+          <div class="us-sec"><span class="us-sec-tag gold">Fed · Tasas · Curva</span><div class="us-sec-line"></div></div>
+          <div class="us-kpi-grid">
+            <div class="us-kpi" style="--ukc:var(--gold2)">
+              <div class="us-kpi-l">Fed Funds Rate<br>FEDFUNDS</div>
+              <div class="us-kpi-v loading" id="us-ff">—</div>
+              <div class="us-kpi-s">% efectiva mensual</div>
+              <div class="us-kpi-d" id="us-ff-d">—</div>
+            </div>
+            <div class="us-kpi" style="--ukc:var(--gold2)">
+              <div class="us-kpi-l">Treasury 2Y<br>DGS2</div>
+              <div class="us-kpi-v loading" id="us-t2">—</div>
+              <div class="us-kpi-s">% yield diario</div>
+              <div class="us-kpi-d" id="us-t2-d">—</div>
+            </div>
+            <div class="us-kpi" style="--ukc:var(--gold2)">
+              <div class="us-kpi-l">Treasury 10Y<br>DGS10</div>
+              <div class="us-kpi-v loading" id="us-t10">—</div>
+              <div class="us-kpi-s">% yield diario</div>
+              <div class="us-kpi-d" id="us-t10-d">—</div>
+            </div>
+            <div class="us-kpi" style="--ukc:var(--acc)">
+              <div class="us-kpi-l">Spread 10Y−2Y<br>T10Y2Y</div>
+              <div class="us-kpi-v loading" id="us-spr">—</div>
+              <div class="us-kpi-s">pb · inversión = recesión</div>
+              <div class="us-kpi-d" id="us-spr-d">—</div>
+            </div>
+            <div class="us-kpi" style="--ukc:var(--orange)">
+              <div class="us-kpi-l">Mortgage 30Y<br>MORTGAGE30US</div>
+              <div class="us-kpi-v loading" id="us-mort">—</div>
+              <div class="us-kpi-s">% tasa fija</div>
+              <div class="us-kpi-d" id="us-mort-d">—</div>
+            </div>
+            <div class="us-kpi" style="--ukc:var(--red)">
+              <div class="us-kpi-l">Spread HY<br>BAMLH0A0HYM2</div>
+              <div class="us-kpi-v loading" id="us-hy">—</div>
+              <div class="us-kpi-s">pb sobre Treasuries</div>
+              <div class="us-kpi-d" id="us-hy-d">—</div>
+            </div>
+          </div>
+
+          <!-- KPIs Monetarios -->
+          <div class="us-sec"><span class="us-sec-tag green">Monetario · Crédito · Consumo</span><div class="us-sec-line"></div></div>
+          <div class="us-kpi-grid">
+            <div class="us-kpi" style="--ukc:var(--green)">
+              <div class="us-kpi-l">M2 Money Supply<br>M2SL</div>
+              <div class="us-kpi-v loading" id="us-m2">—</div>
+              <div class="us-kpi-s">Miles de millones USD</div>
+              <div class="us-kpi-d" id="us-m2-d">—</div>
+            </div>
+            <div class="us-kpi" style="--ukc:var(--green)">
+              <div class="us-kpi-l">Confianza del Consumidor<br>UMCSENT</div>
+              <div class="us-kpi-v loading" id="us-sent">—</div>
+              <div class="us-kpi-s">Índice U. Michigan</div>
+              <div class="us-kpi-d" id="us-sent-d">—</div>
+            </div>
+            <div class="us-kpi" style="--ukc:var(--acc)">
+              <div class="us-kpi-l">Viviendas iniciadas<br>HOUST</div>
+              <div class="us-kpi-v loading" id="us-houst">—</div>
+              <div class="us-kpi-s">Miles de unidades</div>
+              <div class="us-kpi-d" id="us-houst-d">—</div>
+            </div>
+            <div class="us-kpi" style="--ukc:var(--orange)">
+              <div class="us-kpi-l">Índice S&amp;P 500<br>SP500</div>
+              <div class="us-kpi-v loading" id="us-sp">—</div>
+              <div class="us-kpi-s">Precio mensual cierre</div>
+              <div class="us-kpi-d" id="us-sp-d">—</div>
+            </div>
+          </div>
+
+          <!-- Gráficos -->
+          <div class="us-sec"><span class="us-sec-tag">Evolución Histórica</span><div class="us-sec-line"></div></div>
+          <div class="us-charts">
+            <div class="us-cbox">
+              <div class="us-chead">
+                <span class="us-ctitle">CPI YoY vs PCE Core (%)</span>
+                <div class="us-per-btns">
+                  <button class="us-pb active" onclick="usGPer('inf',24,this)">2A</button>
+                  <button class="us-pb" onclick="usGPer('inf',60,this)">5A</button>
+                  <button class="us-pb" onclick="usGPer('inf',120,this)">10A</button>
+                </div>
+              </div>
+              <div class="us-cwrap"><canvas id="us-ch-inf"></canvas></div>
+            </div>
+            <div class="us-cbox">
+              <div class="us-chead">
+                <span class="us-ctitle">Fed Funds Rate · Treasury 2Y / 10Y (%)</span>
+                <div class="us-per-btns">
+                  <button class="us-pb active" onclick="usGPer('rates',24,this)">2A</button>
+                  <button class="us-pb" onclick="usGPer('rates',60,this)">5A</button>
+                  <button class="us-pb" onclick="usGPer('rates',120,this)">10A</button>
+                </div>
+              </div>
+              <div class="us-cwrap"><canvas id="us-ch-rates"></canvas></div>
+            </div>
+            <div class="us-cbox">
+              <div class="us-chead">
+                <span class="us-ctitle">Desempleo U-3 vs U-6 (%)</span>
+                <div class="us-per-btns">
+                  <button class="us-pb active" onclick="usGPer('unemp',24,this)">2A</button>
+                  <button class="us-pb" onclick="usGPer('unemp',60,this)">5A</button>
+                  <button class="us-pb" onclick="usGPer('unemp',120,this)">10A</button>
+                </div>
+              </div>
+              <div class="us-cwrap"><canvas id="us-ch-unemp"></canvas></div>
+            </div>
+            <div class="us-cbox">
+              <div class="us-chead">
+                <span class="us-ctitle">Spread 10Y−2Y (curva) · pb</span>
+                <div class="us-per-btns">
+                  <button class="us-pb active" onclick="usGPer('spr',24,this)">2A</button>
+                  <button class="us-pb" onclick="usGPer('spr',60,this)">5A</button>
+                  <button class="us-pb" onclick="usGPer('spr',120,this)">10A</button>
+                </div>
+              </div>
+              <div class="us-cwrap"><canvas id="us-ch-spr"></canvas></div>
+            </div>
+            <div class="us-cbox">
+              <div class="us-chead">
+                <span class="us-ctitle">M2 Money Supply (MMM USD)</span>
+                <div class="us-per-btns">
+                  <button class="us-pb active" onclick="usGPer('m2',24,this)">2A</button>
+                  <button class="us-pb" onclick="usGPer('m2',60,this)">5A</button>
+                  <button class="us-pb" onclick="usGPer('m2',120,this)">10A</button>
+                </div>
+              </div>
+              <div class="us-cwrap"><canvas id="us-ch-m2"></canvas></div>
+            </div>
+            <div class="us-cbox">
+              <div class="us-chead">
+                <span class="us-ctitle">Spread HY · S&amp;P 500 (eje 2)</span>
+                <div class="us-per-btns">
+                  <button class="us-pb active" onclick="usGPer('risk',24,this)">2A</button>
+                  <button class="us-pb" onclick="usGPer('risk',60,this)">5A</button>
+                  <button class="us-pb" onclick="usGPer('risk',120,this)">10A</button>
+                </div>
+              </div>
+              <div class="us-cwrap"><canvas id="us-ch-risk"></canvas></div>
+            </div>
+          </div>
+
+          <!-- Semáforo ciclo -->
+          <div class="us-sec"><span class="us-sec-tag">Semáforo de Ciclo Económico</span><div class="us-sec-line"></div></div>
+          <div class="us-cycle-grid" id="us-semaforo"></div>
+
+          <!-- Proyecciones FOMC (estáticas actualizables) -->
+          <div class="us-sec"><span class="us-sec-tag gold">Proyecciones FOMC · Dic 2025</span><div class="us-sec-line"></div></div>
+          <div class="us-dot-wrap">
+            <div class="us-dot-title">Summary of Economic Projections (SEP) — Mediana de participantes · Fuente: FRED Blog / Fed</div>
+            <table class="us-dot-tbl">
+              <thead><tr>
+                <th>Variable</th><th>Real 2024</th><th>Proj. 2025</th><th>Proj. 2026</th><th>Proj. 2027</th><th>L/P</th>
+              </tr></thead>
+              <tbody>
+                <tr><td>PBI Real (% var.)</td><td>2.5%</td><td>1.7%</td><td>2.3%</td><td>2.1%</td><td>1.8%</td></tr>
+                <tr><td>Desempleo Q4 (%)</td><td>4.2%</td><td>4.5%</td><td>4.4%</td><td>4.2%</td><td>4.2%</td></tr>
+                <tr><td>PCE Core YoY (%)</td><td>2.8%</td><td>2.5%</td><td>2.5%</td><td>2.2%</td><td>2.0%</td></tr>
+                <tr><td>Fed Funds Rate (%)</td><td>4.3%</td><td>4.3%</td><td>3.9%</td><td>3.4%</td><td>3.0%</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Análisis de contexto derivado -->
+          <div class="us-sec"><span class="us-sec-tag">Análisis Derivado · Relevancia LDWM</span><div class="us-sec-line"></div></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+            <div style="background:var(--surf);border:1px solid var(--bdr);border-radius:var(--radius);padding:16px 18px">
+              <div style="font-family:var(--mono);font-size:9px;color:var(--txt3);text-transform:uppercase;letter-spacing:.1em;margin-bottom:12px;display:flex;align-items:center;gap:5px">
+                <span style="display:inline-block;width:3px;height:9px;background:var(--acc);border-radius:2px"></span>
+                Indicadores calculados
+              </div>
+              <table style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:10px">
+                <tr style="border-bottom:1px solid var(--bdr)"><td style="padding:6px 2px;color:var(--txt2)">Tasa real (FF – CPI)</td><td style="padding:6px 2px;text-align:right;font-weight:500" id="us-real-rate">—</td></tr>
+                <tr style="border-bottom:1px solid var(--bdr)"><td style="padding:6px 2px;color:var(--txt2)">Tasa real (FF – PCE)</td><td style="padding:6px 2px;text-align:right;font-weight:500" id="us-real-rate2">—</td></tr>
+                <tr style="border-bottom:1px solid var(--bdr)"><td style="padding:6px 2px;color:var(--txt2)">Spread HY / nivel</td><td style="padding:6px 2px;text-align:right;font-weight:500" id="us-hy-level">—</td></tr>
+                <tr style="border-bottom:1px solid var(--bdr)"><td style="padding:6px 2px;color:var(--txt2)">Curva 10Y−2Y</td><td style="padding:6px 2px;text-align:right;font-weight:500" id="us-curve">—</td></tr>
+                <tr style="border-bottom:1px solid var(--bdr)"><td style="padding:6px 2px;color:var(--txt2)">BEI – PCE (prima inflación)</td><td style="padding:6px 2px;text-align:right;font-weight:500" id="us-bei-pce">—</td></tr>
+                <tr><td style="padding:6px 2px;color:var(--txt2)">Fase del ciclo</td><td style="padding:6px 2px;text-align:right;font-weight:500" id="us-cycle-phase">—</td></tr>
+              </table>
+            </div>
+            <div style="background:var(--surf);border:1px solid var(--bdr);border-radius:var(--radius);padding:16px 18px">
+              <div style="font-family:var(--mono);font-size:9px;color:var(--txt3);text-transform:uppercase;letter-spacing:.1em;margin-bottom:12px;display:flex;align-items:center;gap:5px">
+                <span style="display:inline-block;width:3px;height:9px;background:var(--gold);border-radius:2px"></span>
+                Implicancias para carteras LDWM
+              </div>
+              <div id="us-implicancias" style="font-family:var(--mono);font-size:10px;color:var(--txt2);line-height:1.9">—</div>
+            </div>
+          </div>
+
+          <div style="font-family:var(--mono);font-size:9px;color:var(--txt3);border:1px solid var(--bdr);border-radius:var(--radius);padding:9px 13px;line-height:1.8">
+            <b>FUENTE:</b> Federal Reserve Economic Data (FRED) · Federal Reserve Bank of St. Louis. Series: GDPC1, UNRATE, U6RATE, CPIAUCSL, CPILFESL, PCEPILFE, FEDFUNDS, DGS2, DGS10, T10YIE, T10Y2Y, MORTGAGE30US, BAMLH0A0HYM2, M2SL, UMCSENT, PAYEMS, INDPRO, HOUST, SP500. Proyecciones FOMC: SEP Dic-2025. Uso interno LDWM · No constituye asesoramiento de inversión.
+          </div>
+
+        </div><!-- /us-body -->
+      </div><!-- /us-dashboard -->
+
+      <div id="us-err-banner" style="display:none;padding:16px 28px"></div>
+    </div><!-- /us-wrap -->
+    </div><!-- /page-usmonitor -->
+
   </div><!-- /content -->
 </div><!-- /app -->
 
@@ -1530,6 +2991,18 @@ function showPage(id) {
     if (!MKT_INTERVAL) MKT_INTERVAL = setInterval(() => {
       if (document.getElementById('page-mercados').classList.contains('active')) mktLoad();
     }, 60000);
+  }
+  if (id === 'monetario' && !window._monLoaded) {
+    window._monLoaded = true;
+    setTimeout(monLoad, 200);
+  }
+  if (id === 'predictor' && !window._prInit) {
+    window._prInit = true;
+    setTimeout(prInit, 200);
+  }
+  if (id === 'usmonitor' && !window._usInit) {
+    window._usInit = true;
+    setTimeout(usInit, 200);
   }
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
@@ -3404,10 +4877,1360 @@ function globUsePrice(bondKey, px) {
   document.getElementById('glob-bond').value = bondKey;
   globSetMode('price');
   document.getElementById('glob-precio').value = px.toFixed(4);
-  // Scroll suave al calculador
   document.getElementById('glob-m-price').scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
+// ══════════════════════════════════════════════════════════
+// MONITOR MONETARIO ARGENTINA — BCRA v4.0 + ArgentinaDatos
+// ══════════════════════════════════════════════════════════
+(function() {
+
+const BCRA_BASE = 'https://api.bcra.gob.ar/estadisticas/v4.0/monetarias';
+const ARGD_BASE = 'https://api.argentinadatos.com/v1';
+const STOCK_TESORO_B = 272; // billones ARS — OPC oct-2025, actualizar manualmente
+
+// IDs verificados contra catálogo BCRA v4.0
+const MV = {
+  BM:15, CIRC:16, BYM_PUB:17, CC_BCRA:19,
+  DEP_CC:22, DEP_CA:23, DEP_PF:24,
+  M2_VAR:25, PREST:26, IPC_M:27, IPC_IA:28,
+  TC_MIN:4, TC_MAY:5, RES:1,
+  BADLAR:7, DEP30:12, PERS:14, TPM:160,
+  PASES_P:152, LEFI:196, M2:109,
+};
+
+const monCache = {};
+const monCharts = {};
+const monGMap = { bm:MV.BM, m2:MV.M2, tc:MV.TC_MAY, res:MV.RES };
+const monGCol = { bm:'#4f8ef7', m2:'#34c87a', tc:'#c9952a', res:'#f09030' };
+const monGLbl = { bm:'Base Mon. (M$)', m2:'M2 (M$)', tc:'TC May. ARS/USD', res:'Reservas MUSD' };
+
+// ── Helpers ──
+const mFmt  = (n,d=0) => n==null||isNaN(n)?'—':n.toLocaleString('es-AR',{minimumFractionDigits:d,maximumFractionDigits:d});
+const mFmtB = n => n==null||isNaN(n)?'—':mFmt(n/1e6,1)+' B';
+const mFmtP = (n,d=2) => n==null||isNaN(n)?'—':(n>=0?'+':'')+n.toFixed(d)+'%';
+const mDate = d => d.toISOString().split('T')[0];
+const mAgo  = n => { const d=new Date(); d.setDate(d.getDate()-n); return d; };
+const mLast = a => a&&a.length?a[a.length-1]:null;
+const mNAgo = (a,n) => {
+  if(!a?.length) return null;
+  const cut=mAgo(n);
+  for(let i=a.length-1;i>=0;i--) if(new Date(a[i].fecha)<=cut) return a[i];
+  return a[0];
+};
+
+function mSet(id, val, cls='') {
+  const el=document.getElementById(id); if(!el) return;
+  el.textContent=val;
+  el.className=el.className.replace(/\bloading\b/,'').trim();
+  ['up','dn','neu'].forEach(c=>el.classList.remove(c));
+  if(cls) el.classList.add(cls);
+}
+function mLoad(id) {
+  const el=document.getElementById(id);
+  if(el&&!el.classList.contains('loading')) el.classList.add('loading');
+}
+
+// ── Fetch BCRA ──
+async function mBcra(idVar, days=90) {
+  const key=`${idVar}_${days}`;
+  if(monCache[key]) return monCache[key];
+  const desde=mDate(mAgo(days+10)), hasta=mDate(new Date());
+  const r=await fetch(`${BCRA_BASE}/${idVar}?desde=${desde}&hasta=${hasta}&limit=500`,
+    {headers:{'Accept-Language':'es-AR','Accept':'application/json'}});
+  if(!r.ok) throw new Error(`BCRA var ${idVar} → HTTP ${r.status}`);
+  const j=await r.json();
+  if(j.status!==200) throw new Error(`BCRA var ${idVar} → status ${j.status}`);
+  const s=(j.results?.[0]?.detalle||[]).sort((a,b)=>a.fecha.localeCompare(b.fecha));
+  monCache[key]=s; return s;
+}
+
+// ── Chart ──
+function mMkChart(canvasId, key, series) {
+  const ctx=document.getElementById(canvasId)?.getContext('2d');
+  if(!ctx) return;
+  const col=monGCol[key];
+  const lbl=series.map(d=>d.fecha), val=series.map(d=>d.valor);
+  if(monCharts[key]) {
+    monCharts[key].data.labels=lbl;
+    monCharts[key].data.datasets[0].data=val;
+    monCharts[key].update('none'); return;
+  }
+  monCharts[key]=new Chart(ctx,{
+    type:'line',
+    data:{labels:lbl,datasets:[{label:monGLbl[key],data:val,borderColor:col,borderWidth:1.5,
+      pointRadius:0,pointHoverRadius:4,backgroundColor:col+'18',fill:true,tension:.3}]},
+    options:{responsive:true,maintainAspectRatio:false,
+      interaction:{mode:'index',intersect:false},
+      plugins:{legend:{display:false},tooltip:{
+        backgroundColor:'#0e1018',borderColor:'#1c2035',borderWidth:1,
+        titleColor:'#8892a8',bodyColor:col,
+        titleFont:{family:'DM Mono',size:9},bodyFont:{family:'DM Mono',size:11,weight:'500'}
+      }},
+      scales:{
+        x:{grid:{color:'#1c203530',drawBorder:false},ticks:{color:'#545d75',font:{family:'DM Mono',size:8},maxTicksLimit:6}},
+        y:{grid:{color:'#1c203540',drawBorder:false},ticks:{color:'#545d75',font:{family:'DM Mono',size:8},maxTicksLimit:5}}
+      }
+    }
+  });
+}
+
+window.monGPer = async function(key, days, btn) {
+  btn.closest('.mon-per-btns').querySelectorAll('.mon-per-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  try {
+    const s=await mBcra(monGMap[key], days+30);
+    mMkChart(`mon-ch-${key}`, key, s.slice(-days));
+  } catch(e) { console.warn('monGPer', e); }
+};
+
+// ── LECAP table ──
+function mRenderLecaps(data) {
+  const tbody=document.getElementById('mt-lec-body');
+  const tbl=document.getElementById('mt-lec-tbl');
+  const note=document.getElementById('mt-lec-note');
+  const load=document.getElementById('mt-lec-loading');
+  if(!data?.length) { load.textContent='No se encontraron letras vigentes.'; return; }
+  const today=new Date();
+  const rows=data
+    .filter(l=>new Date(l.fechaVencimiento||l.vencimiento)>today)
+    .sort((a,b)=>new Date(a.fechaVencimiento||a.vencimiento)-new Date(b.fechaVencimiento||b.vencimiento))
+    .slice(0,20);
+  tbody.innerHTML=rows.map(l=>{
+    const venc=new Date(l.fechaVencimiento||l.vencimiento);
+    const dias=Math.round((venc-today)/86400000);
+    const tipo=(l.tipo||l.instrumento||'').toUpperCase();
+    const ticker=l.ticker||l.codigo||'—';
+    const tem=typeof l.tasa!=='undefined'?parseFloat(l.tasa):
+               typeof l.tem!=='undefined'?parseFloat(l.tem):NaN;
+    const tna=isNaN(tem)?'—':(tem*12).toFixed(2)+'%';
+    const tea=isNaN(tem)?'—':(((1+tem/100)**12-1)*100).toFixed(2)+'%';
+    const temStr=isNaN(tem)?'—':tem.toFixed(4)+'%';
+    const isBoncap=tipo.includes('BONCAP')||tipo.includes('BONO');
+    const isTamar=tipo.includes('TAMAR');
+    const badgeClass=isTamar?'lc-vf':isBoncap?'lc-badge boncap':'lc-badge lecap';
+    const badgeLabel=isTamar?'TAMAR':isBoncap?'BONCAP':'LECAP';
+    const diasColor=dias<60?'var(--red)':dias<120?'var(--orange)':'var(--txt2)';
+    return `<tr>
+      <td><span class="${badgeClass}">${badgeLabel}</span></td>
+      <td style="color:var(--txt)">${ticker}</td>
+      <td style="color:var(--txt2)">${venc.toLocaleDateString('es-AR')}</td>
+      <td style="color:${diasColor};text-align:right">${dias}d</td>
+      <td style="color:var(--green);text-align:right">${temStr}</td>
+      <td style="color:var(--acc);text-align:right">${tna}</td>
+      <td style="color:var(--gold2);text-align:right">${tea}</td>
+    </tr>`;
+  }).join('');
+  load.style.display='none';
+  tbl.style.display='';
+  note.style.display='';
+}
+
+// ── Main load ──
+window.monLoad = async function() {
+  const btn=document.getElementById('mt-btn');
+  if(btn) { btn.classList.add('loading'); btn.querySelector('.mon-spin').style.display='inline-block'; }
+
+  // Reset loadings
+  ['mk-m1','mk-m2','mk-m3','mk-dpf','mk-pases','mk-prest',
+   'mt-eq1','mt-eq2','mt-eq3','mt-of','mt-crawl','mt-mult',
+   'ma-int','ma-intm','ma-pct','ma-exp',
+   'mni-bm1','mni-bm3','mni-m21','mni-m2bm','mni-m3bm','mni-pfm3',
+   'mni-res1','mni-tc1','mni-tc3','mni-badlar','mni-badlar-ea',
+   'mni-dep30','mni-pers','mni-ipc1','mni-ipc-ia','mni-real','mni-real2','mni-spr',
+   'mt-tc','mt-tcm','mt-res','mt-bm','mt-m2','mt-badlar','mt-ipc','mt-ipc-ia','mt-rp'
+  ].forEach(mLoad);
+
+  try {
+    const [bmS,m2S,tcMayS,tcMinS,resS,badlarS,
+           circS,ccS,caS,pfS,ipcMS,ipcIAS,prestS,pasesS,lefiS,dep30S,persS
+    ] = await Promise.all([
+      mBcra(MV.BM,365), mBcra(MV.M2,365), mBcra(MV.TC_MAY,365), mBcra(MV.TC_MIN,90),
+      mBcra(MV.RES,180), mBcra(MV.BADLAR,365),
+      mBcra(MV.CIRC,90), mBcra(MV.DEP_CC,90), mBcra(MV.DEP_CA,90), mBcra(MV.DEP_PF,90),
+      mBcra(MV.IPC_M,90), mBcra(MV.IPC_IA,90),
+      mBcra(MV.PREST,90), mBcra(MV.PASES_P,90), mBcra(MV.LEFI,90),
+      mBcra(MV.DEP30,90), mBcra(MV.PERS,90),
+    ]);
+
+    const [lecRes, rpRes] = await Promise.allSettled([
+      fetch(`${ARGD_BASE}/finanzas/letras`).then(r=>r.ok?r.json():null),
+      fetch(`${ARGD_BASE}/finanzas/indices/riesgo-pais/ultimo`).then(r=>r.ok?r.json():null),
+    ]);
+
+    // Últimos valores
+    const bmL=mLast(bmS), m2L=mLast(m2S), tcML=mLast(tcMayS), tcmL=mLast(tcMinS);
+    const resL=mLast(resS), badL=mLast(badlarS), circL=mLast(circS);
+    const ccL=mLast(ccS), caL=mLast(caS), pfL=mLast(pfS);
+    const ipcML=mLast(ipcMS), ipcIL=mLast(ipcIAS), prestL=mLast(prestS);
+    const pasL=mLast(pasesS), lefiL=mLast(lefiS);
+    const dep30L=mLast(dep30S), persL=mLast(persS);
+
+    // Agregados
+    const m1val = circL&&ccL ? circL.valor+ccL.valor : null;
+    const m2val = m2L?.valor;
+    const m3val = m2val&&pfL ? m2val+pfL.valor : null;
+
+    // KPIs
+    if(m1val) { mSet('mk-m1', mFmtB(m1val)); document.getElementById('mk-m1-d').textContent=circL.fecha; }
+    if(m2val) { mSet('mk-m2', mFmtB(m2val)); document.getElementById('mk-m2-d').textContent=m2L.fecha; }
+    if(m3val) { mSet('mk-m3', mFmtB(m3val)); document.getElementById('mk-m3-d').textContent=pfL.fecha; }
+    if(pfL)   { mSet('mk-dpf', mFmtB(pfL.valor)); document.getElementById('mk-dpf-d').textContent=pfL.fecha; }
+    const pasVal = (lefiL?.valor>0?lefiL:pasL);
+    if(pasVal){ mSet('mk-pases', mFmtB(pasVal.valor)); document.getElementById('mk-pases-d').textContent=pasVal.fecha; }
+    if(prestL){ mSet('mk-prest', mFmtB(prestL.valor)); document.getElementById('mk-prest-d').textContent=prestL.fecha; }
+
+    // Ticker
+    if(tcML)  mSet('mt-tc',    '$ '+mFmt(tcML.valor,2));
+    if(tcmL)  mSet('mt-tcm',   '$ '+mFmt(tcmL.valor,2));
+    if(resL)  mSet('mt-res',   mFmt(resL.valor)+' MUSD');
+    if(bmL)   mSet('mt-bm',    mFmtB(bmL.valor)+' ARS');
+    if(m2val) mSet('mt-m2',    mFmtB(m2val)+' ARS');
+    if(badL)  mSet('mt-badlar',badL.valor.toFixed(2)+'% TNA');
+    if(ipcML) mSet('mt-ipc',   ipcML.valor.toFixed(1)+'%');
+    if(ipcIL) mSet('mt-ipc-ia',ipcIL.valor.toFixed(1)+'%');
+    if(rpRes.status==='fulfilled'&&rpRes.value) {
+      const v=rpRes.value; const bps=v?.valor??v?.value??v?.riesgo_pais??Object.values(v)[0];
+      if(bps) mSet('mt-rp', mFmt(parseFloat(bps))+' bps');
+    }
+
+    // Gráficos
+    mMkChart('mon-ch-bm','bm', bmS.slice(-30));
+    mMkChart('mon-ch-m2','m2', m2S.slice(-30));
+    mMkChart('mon-ch-tc','tc', tcMayS.slice(-30));
+    mMkChart('mon-ch-res','res',resS.slice(-30));
+
+    // TC equilibrio
+    const tcOf=tcML?.valor;
+    const spStr = (eq,of) => {
+      if(!eq||!of) return '';
+      const sp=(eq-of)/of*100;
+      const col=sp>20?'color:var(--red)':sp>0?'color:var(--orange)':'color:var(--green)';
+      return `<span style="${col};font-family:var(--mono);font-size:10px">vs oficial: ${sp>=0?'+':''}${sp.toFixed(1)}%</span>`;
+    };
+    if(bmL&&resL) {
+      const eq1=bmL.valor/resL.valor;
+      mSet('mt-eq1','$ '+mFmt(eq1,0));
+      document.getElementById('mt-eq1-sp').innerHTML=spStr(eq1,tcOf);
+    }
+    if(m2val&&resL) {
+      const eq2=m2val/resL.valor;
+      mSet('mt-eq2','$ '+mFmt(eq2,0));
+      document.getElementById('mt-eq2-sp').innerHTML=spStr(eq2,tcOf);
+    }
+    if(m3val&&resL) {
+      const eq3=m3val/resL.valor;
+      mSet('mt-eq3','$ '+mFmt(eq3,0));
+      document.getElementById('mt-eq3-sp').innerHTML=spStr(eq3,tcOf);
+    }
+    if(tcOf) mSet('mt-of','$ '+mFmt(tcOf,2));
+    const tc1m=mNAgo(tcMayS,30);
+    if(tcML&&tc1m) {
+      const crawl=(tcML.valor-tc1m.valor)/tc1m.valor*100;
+      mSet('mt-crawl',crawl.toFixed(2)+'%/mes',crawl>3?'dn':'neu');
+    }
+    if(m3val&&bmL?.valor) mSet('mt-mult','x'+(m3val/bmL.valor).toFixed(2));
+
+    // Absorción de intereses
+    if(badL&&bmL) {
+      const stockM=STOCK_TESORO_B*1e6;
+      const intA=stockM*(badL.valor/100);
+      const intM=intA/12;
+      const pct=bmL.valor?(intM/bmL.valor*100):null;
+      mSet('ma-int',   mFmtB(intA)+' ARS/año');
+      mSet('ma-intm',  mFmtB(intM)+' ARS/mes');
+      if(pct!=null) mSet('ma-pct', pct.toFixed(1)+'%', pct>5?'dn':'neu');
+    }
+    const bm1m=mNAgo(bmS,30);
+    if(bmL&&bm1m) {
+      const exp=(bmL.valor-bm1m.valor)/bm1m.valor*100;
+      mSet('ma-exp',mFmtP(exp,1)+'/mes', exp>0?'dn':'up');
+    }
+
+    // LECAPs
+    if(lecRes.status==='fulfilled'&&lecRes.value) {
+      try { mRenderLecaps(Array.isArray(lecRes.value)?lecRes.value:lecRes.value?.data||lecRes.value?.letras||[]); }
+      catch(e){ document.getElementById('mt-lec-loading').textContent='Error al parsear letras: '+e.message; }
+    } else {
+      document.getElementById('mt-lec-loading').textContent='No disponible · ArgentinaDatos no respondió.';
+    }
+
+    // Indicadores calculados
+    const bm3m=mNAgo(bmS,90), m21m=mNAgo(m2S,30);
+    if(bmL&&bm1m) mSet('mni-bm1',mFmtP((bmL.valor-bm1m.valor)/bm1m.valor*100,1),bmL.valor>bm1m.valor?'dn':'up');
+    if(bmL&&bm3m) mSet('mni-bm3',mFmtP((bmL.valor-bm3m.valor)/bm3m.valor*100,1),bmL.valor>bm3m.valor?'dn':'up');
+    if(m2L&&m21m) mSet('mni-m21',mFmtP((m2L.valor-m21m.valor)/m21m.valor*100,1),m2L.valor>m21m.valor?'dn':'up');
+    if(m2val&&bmL) mSet('mni-m2bm','x'+(m2val/bmL.valor).toFixed(2),'neu');
+    if(m3val&&bmL) mSet('mni-m3bm','x'+(m3val/bmL.valor).toFixed(2),'neu');
+    if(m3val&&pfL) mSet('mni-pfm3',(pfL.valor/m3val*100).toFixed(1)+'%','neu');
+    const res1m=mNAgo(resS,30);
+    if(resL&&res1m) mSet('mni-res1',mFmtP((resL.valor-res1m.valor)/res1m.valor*100,2),resL.valor>res1m.valor?'up':'dn');
+    const tc1mA=mNAgo(tcMayS,30), tc3mA=mNAgo(tcMayS,90);
+    if(tcML&&tc1mA) mSet('mni-tc1',mFmtP((tcML.valor-tc1mA.valor)/tc1mA.valor*100,2),'neu');
+    if(tcML&&tc3mA) mSet('mni-tc3',mFmtP((tcML.valor-tc3mA.valor)/tc3mA.valor*100,2),'neu');
+    if(badL) {
+      mSet('mni-badlar',badL.valor.toFixed(2)+'% TNA','neu');
+      mSet('mni-badlar-ea',((Math.pow(1+badL.valor/1200,12)-1)*100).toFixed(2)+'% TEA','neu');
+    }
+    if(dep30L) mSet('mni-dep30',dep30L.valor.toFixed(2)+'% TNA','neu');
+    if(persL)  mSet('mni-pers', persL.valor.toFixed(2)+'% TNA','dn');
+    if(ipcML)  mSet('mni-ipc1', ipcML.valor.toFixed(2)+'%','neu');
+    if(ipcIL)  mSet('mni-ipc-ia',ipcIL.valor.toFixed(1)+'%','dn');
+    if(badL&&ipcML) {
+      const rr=badL.valor/12-ipcML.valor;
+      mSet('mni-real',mFmtP(rr,2),rr>0?'up':'dn');
+      mSet('mni-real2',rr>0?'POSITIVA':'NEGATIVA',rr>0?'up':'dn');
+    }
+    if(tcML&&tcmL) mSet('mni-spr','+'+((tcmL.valor-tcML.valor)/tcML.valor*100).toFixed(2)+'%','neu');
+
+    // Timestamp
+    const now=new Date();
+    const tsEl=document.getElementById('mt-ts');
+    if(tsEl) tsEl.textContent=now.toLocaleString('es-AR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
+    toast('Monitor Monetario actualizado', 'success', 2500);
+
+  } catch(err) {
+    console.error('monLoad:', err);
+    toast('Error al cargar Monitor AR: '+err.message, 'error', 5000);
+  }
+
+  if(btn) { btn.classList.remove('loading'); btn.querySelector('.mon-spin').style.display='none'; }
+};
+
+})(); // fin IIFE monitor monetario
+
+// ══════════════════════════════════════════════════════════
+// MACRO PREDICTOR — Argentina 2026 · Dual Escenario + Media + BM
+// ══════════════════════════════════════════════════════════
+(function(){
+
+const BCRA = 'https://api.bcra.gob.ar/estadisticas/v4.0/monetarias';
+const ARGD = 'https://api.argentinadatos.com/v1';
+
+let PR_LIVE = { res:null, tc:null, badlar:null, ipc:null, rp:null, bm:null };
+const PRC = {};
+
+// ── Utils ──
+const pN  = (n,d=1) => n==null?'—':n.toLocaleString('es-AR',{minimumFractionDigits:d,maximumFractionDigits:d});
+const pB  = n => n==null?'—':'$'+pN(n/1000,1)+'B';
+const pBM = n => n==null?'—':'$'+pN(n/1e6,1)+'B';   // millones ARS → billones
+const pTC = n => n==null?'—':'$'+pN(n,0);
+const gS  = id => parseFloat(document.getElementById(id)?.value??0);
+
+// ── Tab switch ──
+window.prSwitchTab = function(t) {
+  document.getElementById('pr-sliders-a').style.display = t==='a'?'':'none';
+  document.getElementById('pr-sliders-b').style.display = t==='b'?'':'none';
+  document.getElementById('pr-preset-a').style.display  = t==='a'?'':'none';
+  document.getElementById('pr-preset-b').style.display  = t==='b'?'':'none';
+  document.getElementById('pr-tab-a').classList.toggle('active', t==='a');
+  document.getElementById('pr-tab-b').classList.toggle('active', t==='b');
+};
+
+// ── Presets ──
+const PRESETS = {
+  stress: { agro:27, en:14, min:5, ind:18, imp:55, fmi:2, mkt:0, shock:-20,
+            vb:8.4, vf:4.5, vm:3.5, rb:0, rm:65,
+            crawl:5, bdpres:75, badlar:50, ipc:5.5, rp:1800, cred:20, elec:70, fis:-0.5 },
+  base:   { agro:34.5, en:18, min:7, ind:22, imp:60, fmi:5, mkt:0, shock:-5,
+            vb:8.4, vf:4.5, vm:3.5, rb:0, rm:90,
+            crawl:2.9, bdpres:25, badlar:28, ipc:2.9, rp:630, cred:40, elec:55, fis:1.5 },
+  bull:   { agro:40, en:22, min:9, ind:28, imp:68, fmi:8, mkt:3, shock:5,
+            vb:8.4, vf:4.5, vm:3.5, rb:40, rm:100,
+            crawl:2, bdpres:10, badlar:24, ipc:2, rp:450, cred:70, elec:30, fis:2 },
+};
+
+window.prReset = () => { prLoadPreset('a','base'); prLoadPreset('b','bull'); prCalc(); };
+
+window.prLoadPreset = function(sc, preset) {
+  const p = PRESETS[preset]; if (!p) return;
+  Object.entries(p).forEach(([k,v]) => {
+    const el = document.getElementById(`ps-${sc}-${k}`);
+    if (el) el.value = v;
+  });
+  // actualizar botones activos del preset
+  document.querySelectorAll(`.pr-sc`).forEach(b => {
+    if (b.id && b.id.startsWith(`pr-sc-${sc}`)) b.classList.remove('active');
+  });
+  const btn = document.getElementById(`pr-sc-${sc}-${preset}`);
+  if (btn) btn.classList.add('active');
+  prCalc();
+};
+
+// ── Labels del panel izquierdo ──
+function prLabels() {
+  const setLbl = (id, val) => { const e=document.getElementById(id); if(e) e.textContent=val; };
+  const fB = v=>'$'+pN(v,1)+'B', fP = v=>(v>=0?'+':'')+pN(v,1)+'%', fPct=v=>pN(v,0)+'%';
+  ['a','b'].forEach(sc => {
+    setLbl(`pv-${sc}-agro`,  fB(gS(`ps-${sc}-agro`)));
+    setLbl(`pv-${sc}-en`,    fB(gS(`ps-${sc}-en`)));
+    setLbl(`pv-${sc}-min`,   fB(gS(`ps-${sc}-min`)));
+    setLbl(`pv-${sc}-ind`,   fB(gS(`ps-${sc}-ind`)));
+    setLbl(`pv-${sc}-imp`,   fB(gS(`ps-${sc}-imp`)));
+    setLbl(`pv-${sc}-fmi`,   fB(gS(`ps-${sc}-fmi`)));
+    setLbl(`pv-${sc}-mkt`,   fB(gS(`ps-${sc}-mkt`)));
+    setLbl(`pv-${sc}-shock`, fP(gS(`ps-${sc}-shock`)));
+    setLbl(`pv-${sc}-vb`,    fB(gS(`ps-${sc}-vb`)));
+    setLbl(`pv-${sc}-vf`,    fB(gS(`ps-${sc}-vf`)));
+    setLbl(`pv-${sc}-vm`,    fB(gS(`ps-${sc}-vm`)));
+    setLbl(`pv-${sc}-rm`,    fPct(gS(`ps-${sc}-rm`)));
+    setLbl(`pv-${sc}-rb`,    fPct(gS(`ps-${sc}-rb`)));
+    setLbl(`pv-${sc}-crawl`, pN(gS(`ps-${sc}-crawl`),1)+'%');
+    setLbl(`pv-${sc}-bdpres`,fPct(gS(`ps-${sc}-bdpres`)));
+    setLbl(`pv-${sc}-badlar`,pN(gS(`ps-${sc}-badlar`),0)+'%');
+    setLbl(`pv-${sc}-ipc`,   pN(gS(`ps-${sc}-ipc`),1)+'%');
+    setLbl(`pv-${sc}-rp`,    pN(gS(`ps-${sc}-rp`),0)+' bps');
+    setLbl(`pv-${sc}-cred`,  fPct(gS(`ps-${sc}-cred`)));
+    setLbl(`pv-${sc}-elec`,  fPct(gS(`ps-${sc}-elec`)));
+    setLbl(`pv-${sc}-fis`,   fP(gS(`ps-${sc}-fis`))+'% PBI');
+  });
+  // compartidos
+  setLbl('pv-pbi',    (gS('ps-pbi')>=0?'+':'')+pN(gS('ps-pbi'),1)+'%');
+  setLbl('pv-bm-exp', (gS('ps-bm-exp')>=0?'+':'')+pN(gS('ps-bm-exp'),1)+'%/m');
+  setLbl('pv-mult',   'x'+pN(gS('ps-mult'),1));
+  setLbl('pv-hor',    pN(gS('ps-hor'),0)+'m');
+}
+
+// ── Motor de simulación para UN escenario ──
+function prRunScen(sc) {
+  const res0  = PR_LIVE.res  ?? 43500;
+  const tc0   = PR_LIVE.tc   ?? 1390;
+  const bm0   = PR_LIVE.bm   ?? 42000000; // millones ARS
+  const meses = gS('ps-hor');
+  const pbi   = gS('ps-pbi') / 100;       // tasa anual
+  const bmExpM= gS('ps-bm-exp') / 100;    // expansión BM adicional mensual
+  const mult  = gS('ps-mult');             // multiplicador M3
+
+  // Sliders del escenario sc
+  const G = k => gS(`ps-${sc}-${k}`);
+  const shk     = 1 + G('shock')/100;
+  // Elasticidad importaciones respecto a PBI: +1.2% importaciones por cada +1% PBI
+  const impAjust = 1 + pbi * 1.2;
+  const ingrM   = ((G('agro') + G('en') + G('min') + G('ind')) * shk + G('fmi') + G('mkt')) * 1000 / 12;
+  const impM    = G('imp') * 1000 / 12 * impAjust;
+  const rb      = G('rb')/100, rm = G('rm')/100;
+  const pagoB   = G('vb') * 1000 * (1-rb) / 12;
+  const pagoF   = G('vf') * 1000 / 12;
+  const pagoM   = G('vm') * 1000 * (1-rm) / 12;
+  const pagoO   = 1500 / 12;              // BOPREAL fijo
+  const totalP  = pagoB + pagoF + pagoM + pagoO;
+  const cred    = G('cred')/100;
+  const pres    = G('bdpres')/100 * (1 - cred*0.6);
+  const salidaM = res0 * 0.004 * pres;
+  const flujoM  = ingrM - impM - totalP - salidaM;
+  const crawl   = G('crawl')/100;
+  const badlar  = G('badlar');
+  const ipc     = G('ipc');
+  const rp      = G('rp');
+  const elec    = G('elec')/100;
+  const tasaReal= badlar/12 - ipc;
+
+  const lbl=[], aRes=[], aRN=[], aTC=[], aFlujo=[], aTasa=[], aBM=[], aM3=[], aTCeq=[];
+  const now = new Date();
+  let resCur=res0, tcCur=tc0, bmCur=bm0;
+
+  for (let i=0; i<=meses; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth()+i, 1);
+    lbl.push(d.toLocaleDateString('es-AR',{month:'short',year:'2-digit'}));
+    const rnCur = resCur - 18000 - 800;
+    aRes.push(Math.round(resCur));
+    aRN.push(Math.round(rnCur));
+    aTC.push(Math.round(tcCur));
+    aTasa.push(parseFloat(tasaReal.toFixed(2)));
+
+    // Base monetaria: crece por PBI (remonetización) + política BCRA
+    // BM mensual = BM × (1 + pbi/12 × factor_rem + bmExpM)
+    // Además BADLAR/12 representa la tasa de interés que absorbe pesos (si positiva = más demanda de M)
+    const crMonetario = pbi/12 * 0.8 + bmExpM/100 + Math.max(0, tasaReal/100/12);
+    aBM.push(Math.round(bmCur));
+    const m3Cur = bmCur * mult;
+    aM3.push(Math.round(m3Cur));
+    // TC equilibrio monetario: M3 (M ARS) / Reservas (MUSD)
+    // M3 en millones ARS / Reservas en MUSD = ARS por USD
+    const tcEqCur = resCur > 0 ? m3Cur / resCur : null;
+    aTCeq.push(tcEqCur ? Math.round(tcEqCur) : null);
+
+    if (i < meses) {
+      // Vencimientos concentrados en ene/jul
+      const mes = d.getMonth();
+      const esSem = (mes===0||mes===6);
+      const multV = esSem ? 2.8 : 0.4;
+      const flujoMes = ingrM - impM - (pagoB*multV*12/meses) - pagoF - pagoM - pagoO - salidaM;
+      aFlujo.push(Math.round(flujoMes));
+      resCur += flujoMes;
+
+      // TC
+      const elecPrima = (i/meses)*elec*0.008;
+      const rpM = (rp/10000)/12*pres*0.5;
+      tcCur *= (1 + crawl + rpM + elecPrima);
+
+      // BM
+      bmCur *= (1 + crMonetario);
+    } else {
+      aFlujo.push(Math.round(flujoM));
+    }
+  }
+
+  return { lbl, aRes, aRN, aTC, aFlujo, aTasa, aBM, aM3, aTCeq,
+    resFin: aRes[meses], rnFin: aRN[meses], tcFin: aTC[meses],
+    bmFin: aBM[meses], m3Fin: aM3[meses], tceqFin: aTCeq[meses],
+    tasaReal, flujoM, ingrM, impM, rb, rm };
+}
+
+// ── Gráficos ──
+const COL_A = '#f05050', COL_M = '#c9952a', COL_B = '#34c87a';
+
+function prMkC(cid, key, lbl, datasets) {
+  const ctx = document.getElementById(cid)?.getContext('2d');
+  if (!ctx) return;
+  const ds = datasets.map(d => ({
+    label:d.lbl, data:d.data,
+    borderColor:d.col, borderWidth:1.5,
+    backgroundColor:d.fill?d.col+'12':'transparent',
+    fill:d.fill||false, pointRadius:0, pointHoverRadius:3, tension:.3,
+    borderDash:d.dash?[4,4]:[],
+    segment: d.dyn?{borderColor:ctx=>ctx.p0.parsed.y<0?'#f05050':'#34c87a'}:undefined,
+  }));
+  if (PRC[key]) { PRC[key].data.labels=lbl; PRC[key].data.datasets=ds; PRC[key].update('none'); return; }
+  PRC[key] = new Chart(ctx,{
+    type:'line', data:{labels:lbl,datasets:ds},
+    options:{responsive:true,maintainAspectRatio:false,
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{display:true,labels:{color:'#8892a8',font:{family:'DM Mono',size:8},boxWidth:8}},
+        tooltip:{backgroundColor:'#0e1018',borderColor:'#1c2035',borderWidth:1,
+          titleColor:'#8892a8',bodyFont:{family:'DM Mono',size:10}}
+      },
+      scales:{
+        x:{grid:{color:'#1c203528'},ticks:{color:'#545d75',font:{family:'DM Mono',size:7},maxTicksLimit:8}},
+        y:{grid:{color:'#1c203538'},ticks:{color:'#545d75',font:{family:'DM Mono',size:7},maxTicksLimit:5}}
+      }
+    }
+  });
+}
+
+// ── Avg array ──
+const avg2 = (a,b) => a.map((v,i) => v!=null&&b[i]!=null ? Math.round((v+b[i])/2) : null);
+
+// ── Tabla vencimientos dual ──
+const VENC = [
+  {p:'Ene 2026',b:4200,f:839, m:400,o:200},{p:'Feb 2026',b:0,f:0,   m:300,o:150},
+  {p:'Mar 2026',b:0,f:32,  m:300,o:100},{p:'Abr 2026',b:0,f:32,  m:300,o:100},
+  {p:'May 2026',b:0,f:1050,m:300,o:100},{p:'Jun 2026',b:200,f:200,m:300,o:150},
+  {p:'Jul 2026',b:4200,f:839,m:400,o:200},{p:'Ago 2026',b:0,f:200, m:300,o:100},
+  {p:'Sep 2026',b:0,f:800, m:300,o:100},{p:'Oct 2026',b:0,f:200, m:300,o:100},
+  {p:'Nov 2026',b:0,f:200, m:300,o:180},{p:'Dic 2026',b:0,f:100, m:300,o:100},
+  {p:'2027 est.',b:8400,f:4000,m:3500,o:1500},
+];
+
+function prVencTable(rA, rB) {
+  const tbody = document.getElementById('pr-vtbody'); if (!tbody) return;
+  const rbA=rA.rb, rmA=rA.rm, ingrA=rA.ingrM, impA=rA.impM;
+  const rbB=rB.rb, rmB=rB.rm, ingrB=rB.ingrM, impB=rB.impM;
+
+  tbody.innerHTML = VENC.map(r => {
+    const tot  = r.b + r.f + r.m + r.o;
+    // Usamos rollover medio de A y B para el pago neto (columna compartida)
+    const rollA = r.b*rbA + r.m*rmA;
+    const rollB = r.b*rbB + r.m*rmB;
+    const roll  = Math.round((rollA+rollB)/2);
+    const neto  = tot - roll;
+    const es27  = r.p.includes('2027');
+    const mult  = es27 ? 12 : 1;
+    const fA    = Math.round((ingrA-impA)*mult - neto);
+    const fB    = Math.round((ingrB-impB)*mult - neto);
+    const cls   = (f) => f<-2000?'c-stress':f<0?'c-warn':'c-ok';
+    const est   = (fA+fB)/2 < -2000 ? '⚠ Crítico' : (fA+fB)/2 < 0 ? '◑ Tensión' : '● OK';
+    return `<tr>
+      <td>${r.p}</td><td>${pN(tot,0)}</td><td>${pN(roll,0)}</td>
+      <td class="${neto>2000?'c-stress':'c-warn'}">${pN(Math.round(neto),0)}</td>
+      <td>${pN(Math.round((ingrA-impA)*mult),0)}</td>
+      <td class="${cls(fA)}">${fA>=0?'+':''}${pN(fA,0)}</td>
+      <td>${pN(Math.round((ingrB-impB)*mult),0)}</td>
+      <td class="${cls(fB)}">${fB>=0?'+':''}${pN(fB,0)}</td>
+      <td class="${cls((fA+fB)/2)}">${est}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ── Supuestos comparados ──
+function prSupuestos(rA, rB) {
+  const g = document.getElementById('pr-supgrid'); if (!g) return;
+  const pbi  = gS('ps-pbi'), hor = gS('ps-hor'), mult = gS('ps-mult'), bmExp = gS('ps-bm-exp');
+  const rows = [
+    ['Agro A/B',       `$${pN(gS('ps-a-agro'),1)}B`, `$${pN(gS('ps-b-agro'),1)}B`],
+    ['Energía A/B',    `$${pN(gS('ps-a-en'),1)}B`,   `$${pN(gS('ps-b-en'),1)}B`],
+    ['Minería A/B',    `$${pN(gS('ps-a-min'),1)}B`,  `$${pN(gS('ps-b-min'),1)}B`],
+    ['Industria A/B',  `$${pN(gS('ps-a-ind'),1)}B`,  `$${pN(gS('ps-b-ind'),1)}B`],
+    ['Importac. A/B',  `$${pN(gS('ps-a-imp'),1)}B`,  `$${pN(gS('ps-b-imp'),1)}B`],
+    ['FMI A/B',        `$${pN(gS('ps-a-fmi'),1)}B`,  `$${pN(gS('ps-b-fmi'),1)}B`],
+    ['Shock A/B',      `${gS('ps-a-shock')>=0?'+':''}${gS('ps-a-shock')}%`, `${gS('ps-b-shock')>=0?'+':''}${gS('ps-b-shock')}%`],
+    ['Roll.bonos A/B', `${gS('ps-a-rb')}%`,           `${gS('ps-b-rb')}%`],
+    ['Crawl A/B',      `${pN(gS('ps-a-crawl'),1)}%`,  `${pN(gS('ps-b-crawl'),1)}%`],
+    ['IPC A/B',        `${pN(gS('ps-a-ipc'),1)}%`,    `${pN(gS('ps-b-ipc'),1)}%`],
+    ['RP A/B',         `${gS('ps-a-rp')}bps`,          `${gS('ps-b-rp')}bps`],
+    ['Cred. A/B',      `${gS('ps-a-cred')}%`,          `${gS('ps-b-cred')}%`],
+    ['PBI (compart.)', `${pbi>=0?'+':''}${pN(pbi,1)}%`, '↕ afecta imp.'],
+    ['Exp.BM (comp.)', `${bmExp>=0?'+':''}${pN(bmExp,1)}%/m`, ''],
+    ['Mult. M3 (comp.)',`x${pN(mult,1)}`, ''],
+    ['Horizonte',       `${hor}m`, ''],
+  ];
+  g.innerHTML = `<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px">` +
+    `<div style="font-family:var(--mono);font-size:8px;color:var(--txt3);padding:5px 8px;background:var(--bg);border-radius:2px">Variable</div>` +
+    `<div style="font-family:var(--mono);font-size:8px;color:var(--red);padding:5px 8px;background:var(--bg);border-radius:2px">🅐</div>` +
+    `<div style="font-family:var(--mono);font-size:8px;color:var(--green);padding:5px 8px;background:var(--bg);border-radius:2px">🅑</div>` +
+    rows.map(([k,a,b])=>
+      `<div style="font-family:var(--mono);font-size:9px;color:var(--txt2);padding:5px 8px;border-bottom:1px solid var(--bdr)">${k}</div>` +
+      `<div style="font-family:var(--mono);font-size:9px;color:var(--txt);padding:5px 8px;border-bottom:1px solid var(--bdr)">${a}</div>` +
+      `<div style="font-family:var(--mono);font-size:9px;color:var(--txt);padding:5px 8px;border-bottom:1px solid var(--bdr)">${b}</div>`
+    ).join('') + `</div>`;
+}
+
+// ── Semáforo sobre la media ──
+function prSemaforo(rA, rB) {
+  const resM  = (rA.resFin + rB.resFin) / 2;
+  const rnM   = (rA.rnFin  + rB.rnFin)  / 2;
+  const flujoM= (rA.flujoM + rB.flujoM) / 2;
+  const trM   = (rA.tasaReal + rB.tasaReal) / 2;
+  const rpM   = (gS('ps-a-rp') + gS('ps-b-rp')) / 2;
+  const credM = (gS('ps-a-cred') + gS('ps-b-cred')) / 2;
+  const fisM  = (gS('ps-a-fis') + gS('ps-b-fis')) / 2;
+  const elecM = (gS('ps-a-elec') + gS('ps-b-elec')) / 2;
+
+  const items = [
+    {l:'Reservas brutas',  ok:resM>42000,  w:resM>30000,  v:pB(resM)},
+    {l:'Reservas netas',   ok:rnM>5000,    w:rnM>0,       v:pB(rnM)},
+    {l:'Flujo divs/mes',   ok:flujoM>500,  w:flujoM>-500, v:pN(flujoM,0)+'M'},
+    {l:'Tasa real',        ok:trM>1,       w:trM>-0.5,    v:trM.toFixed(2)+'%'},
+    {l:'Riesgo país',      ok:rpM<600,     w:rpM<1200,    v:pN(rpM,0)+' bps'},
+    {l:'Credibilidad',     ok:credM>=60,   w:credM>=35,   v:pN(credM,0)+'%'},
+    {l:'Superávit fiscal', ok:fisM>=1,     w:fisM>=0,     v:(fisM>=0?'+':'')+pN(fisM,1)+'% PBI'},
+    {l:'Riesgo elec. 27',  ok:elecM<0.3,  w:elecM<0.6,   v:pN(elecM*100,0)+'%'},
+    {l:'PBI',              ok:gS('ps-pbi')>3, w:gS('ps-pbi')>0, v:(gS('ps-pbi')>=0?'+':'')+pN(gS('ps-pbi'),1)+'%'},
+  ];
+  const sem = document.getElementById('pr-semaforo'); if (!sem) return;
+  sem.innerHTML = items.map(it => {
+    const col = it.ok?'var(--green)':it.w?'var(--orange)':'var(--red)';
+    const ico = it.ok?'●':it.w?'◐':'○';
+    return `<div class="pr-sem-item">
+      <span class="pr-sem-dot" style="color:${col}">${ico}</span>
+      <div><div class="pr-sem-lbl">${it.l}</div>
+      <div class="pr-sem-val" style="color:${col}">${it.v}</div></div>
+    </div>`;
+  }).join('');
+}
+
+// ── KPI triple ──
+function setKPI3(key, vA, vMed, vB, fmtFn, clsFn) {
+  const set = (id, v) => {
+    const el = document.getElementById(id); if(!el) return;
+    el.textContent = fmtFn(v);
+    el.className = 'pr-kpi3-v';
+    if (clsFn) el.classList.add(clsFn(v));
+  };
+  set(`pr-a-${key}`, vA);
+  set(`pr-m-${key}`, vMed);
+  set(`pr-b-${key}`, vB);
+}
+
+// ── CÁLCULO PRINCIPAL ──
+window.prCalc = function() {
+  prLabels();
+  const rA = prRunScen('a');
+  const rB = prRunScen('b');
+  const lbl = rA.lbl;
+  const meses = gS('ps-hor');
+
+  // Media arrays
+  const mRes  = avg2(rA.aRes,  rB.aRes);
+  const mTC   = avg2(rA.aTC,   rB.aTC);
+  const mBM   = avg2(rA.aBM,   rB.aBM);
+  const mTCeq = avg2(rA.aTCeq, rB.aTCeq);
+  const mFlujo= avg2(rA.aFlujo,rB.aFlujo);
+  const mTasa = rA.aTasa.map((v,i)=>parseFloat(((v+rB.aTasa[i])/2).toFixed(2)));
+
+  // Gráficos
+  prMkC('pr-ch-res','res', lbl,[
+    {lbl:'Escc A',  data:rA.aRes,  col:COL_A, fill:false},
+    {lbl:'Media',   data:mRes,     col:COL_M, fill:true},
+    {lbl:'Escc B',  data:rB.aRes,  col:COL_B, fill:false},
+  ]);
+  prMkC('pr-ch-tc','tc', lbl,[
+    {lbl:'Escc A', data:rA.aTC, col:COL_A, fill:false},
+    {lbl:'Media',  data:mTC,    col:COL_M, fill:true},
+    {lbl:'Escc B', data:rB.aTC, col:COL_B, fill:false},
+  ]);
+  prMkC('pr-ch-bm','bm', lbl,[
+    {lbl:'BM A',  data:rA.aBM, col:COL_A, fill:false},
+    {lbl:'BM Med',data:mBM,    col:COL_M, fill:true},
+    {lbl:'BM B',  data:rB.aBM, col:COL_B, fill:false},
+  ]);
+  prMkC('pr-ch-tceq','tceq', lbl,[
+    {lbl:'TC-eq A', data:rA.aTCeq, col:COL_A, fill:false},
+    {lbl:'TC-eq Med',data:mTCeq,   col:COL_M, fill:true},
+    {lbl:'TC-eq B', data:rB.aTCeq, col:COL_B, fill:false},
+  ]);
+  prMkC('pr-ch-flujo','flujo', lbl.slice(1),[
+    {lbl:'Flujo A', data:rA.aFlujo.slice(1), col:COL_A, fill:false, dyn:true},
+    {lbl:'Media',   data:mFlujo.slice(1),    col:COL_M, fill:false},
+    {lbl:'Flujo B', data:rB.aFlujo.slice(1), col:COL_B, fill:false},
+  ]);
+  prMkC('pr-ch-tasa','tasa', lbl,[
+    {lbl:'Tasa real A', data:rA.aTasa, col:COL_A, fill:false},
+    {lbl:'Media',       data:mTasa,    col:COL_M, fill:false},
+    {lbl:'Tasa real B', data:rB.aTasa, col:COL_B, fill:false},
+    {lbl:'Crawl A',     data:rA.aRes.map(()=>gS('ps-a-crawl')), col:'#4f8ef760', fill:false, dash:true},
+    {lbl:'Crawl B',     data:rB.aRes.map(()=>gS('ps-b-crawl')), col:'#34c87a60', fill:false, dash:true},
+  ]);
+
+  // KPI triple
+  const resMed  = (rA.resFin+rB.resFin)/2;
+  const rnMed   = (rA.rnFin +rB.rnFin) /2;
+  const tcMed   = (rA.tcFin +rB.tcFin) /2;
+  const trMed   = (rA.tasaReal+rB.tasaReal)/2;
+  const flMed   = (rA.flujoM+rB.flujoM)/2;
+  const bmMed   = (rA.bmFin +rB.bmFin) /2;
+  const m3Med   = (rA.m3Fin +rB.m3Fin) /2;
+  const tceqMed = rA.tceqFin&&rB.tceqFin?(rA.tceqFin+rB.tceqFin)/2:null;
+
+  const res0 = PR_LIVE.res ?? 43500;
+  setKPI3('rb',  rA.resFin, resMed, rB.resFin, pB,  v => v>42000?'up':v>30000?'neu':'dn');
+  setKPI3('rn',  rA.rnFin,  rnMed,  rB.rnFin,  pB,  v => v>5000?'up':v>0?'neu':'dn');
+  setKPI3('tc',  rA.tcFin,  tcMed,  rB.tcFin,  pTC, ()=>'neu');
+  setKPI3('tr',  rA.tasaReal, trMed, rB.tasaReal, v=>(v>=0?'+':'')+v.toFixed(2)+'%/m', v=>v>1?'up':v>-0.5?'neu':'dn');
+  setKPI3('fl',  rA.flujoM, flMed, rB.flujoM,  v=>(v>=0?'+':'')+pN(v,0)+'M', v=>v>500?'up':v>-500?'neu':'dn');
+  setKPI3('bm',  rA.bmFin,  bmMed, rB.bmFin,   pBM, ()=>'neu');
+  setKPI3('m3',  rA.m3Fin,  m3Med, rB.m3Fin,   pBM, ()=>'neu');
+  setKPI3('tceq',rA.tceqFin,tceqMed,rB.tceqFin,v=>v?pTC(v):'—', ()=>'neu');
+
+  prSemaforo(rA, rB);
+  prVencTable(rA, rB);
+  prSupuestos(rA, rB);
+};
+
+// ── Init: datos live ──
+window.prInit = async function() {
+  try {
+    const today=new Date(), desde=new Date(today);
+    desde.setDate(desde.getDate()-5);
+    const dStr = d => d.toISOString().split('T')[0];
+    const fetchB = async id => {
+      const r=await fetch(`${BCRA}/${id}?desde=${dStr(desde)}&hasta=${dStr(today)}&limit=10`,
+        {headers:{'Accept-Language':'es-AR','Accept':'application/json'}});
+      if(!r.ok) return null;
+      const j=await r.json();
+      const arr=j?.results?.[0]?.detalle||[];
+      return arr.sort((a,b)=>b.fecha.localeCompare(a.fecha))[0]?.valor??null;
+    };
+    const [res,tc,badlar,ipc,bm] = await Promise.all([
+      fetchB(1), fetchB(5), fetchB(7), fetchB(27), fetchB(15)
+    ]);
+    PR_LIVE.res=res; PR_LIVE.tc=tc; PR_LIVE.badlar=badlar; PR_LIVE.ipc=ipc; PR_LIVE.bm=bm;
+
+    const elv=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
+    if(res)    elv('pv-res-live','$'+pN(res/1000,1)+'B MUSD');
+    if(tc)     elv('pv-tc-live', '$'+pN(tc,2)+' ARS/USD');
+    if(bm)     elv('pv-bm-live', '$'+pBM(bm)+' ARS');
+    if(badlar) { ['a','b'].forEach(sc=>{const e=document.getElementById(`ps-${sc}-badlar`); if(e)e.value=Math.round(badlar);}); }
+    if(ipc)    { ['a','b'].forEach(sc=>{const e=document.getElementById(`ps-${sc}-ipc`);    if(e)e.value=ipc.toFixed(1);}); }
+
+    try {
+      const rp=await fetch(`${ARGD}/finanzas/indices/riesgo-pais/ultimo`).then(r=>r.json());
+      const rpv=rp?.valor??rp?.value??Object.values(rp||{})[0];
+      if(rpv){
+        const rpn=parseFloat(rpv);
+        const rpA=document.getElementById('ps-a-rp'), rpB=document.getElementById('ps-b-rp');
+        if(rpA) rpA.value=Math.min(2500,Math.round(rpn/50)*50);
+        if(rpB) rpB.value=Math.max(200,Math.min(2500,Math.round((rpn*0.7)/50)*50));
+      }
+    } catch(e){}
+
+    toast('Macro Predictor: datos live cargados', 'success', 2000);
+  } catch(e){ console.warn('prInit:', e); }
+
+  // Cargar preset base en A, bull en B
+  window.prLoadPreset('a','base');
+  window.prLoadPreset('b','bull');
+  prCalc();
+};
+
+})(); // fin IIFE predictor
+
+// ══════════════════════════════════════════════════════════
+// MONITOR ECONOMÍA EEUU · API FRED
+// ══════════════════════════════════════════════════════════
+(function(){
+
+// CORS proxy — necesario cuando se abre el archivo localmente (file://)
+// corsproxy.io agrega los headers Access-Control-Allow-Origin requeridos
+const FRED_DIRECT = 'https://api.stlouisfed.org/fred/series/observations';
+const CORS_PROXY  = 'https://corsproxy.io/?url=';
+const US_KEY_LS   = 'ldwm_fred_api_key';
+
+// Construye la URL FRED con o sin proxy CORS según origen
+function buildFredUrl(seriesId, key, startDate) {
+  const params = `series_id=${seriesId}&api_key=${key}&file_type=json&sort_order=desc&observation_start=${startDate}&limit=500`;
+  const directUrl = `${FRED_DIRECT}?${params}`;
+  // Desde file:// necesitamos el proxy; desde http/https podemos ir directo
+  const isLocal = location.protocol === 'file:';
+  return isLocal ? `${CORS_PROXY}${encodeURIComponent(directUrl)}` : directUrl;
+}
+
+// Cache de series cargadas: { seriesId_period: [{date,value}] }
+const usCache = {};
+// Chart instances
+const usCharts = {};
+
+// ── Helpers ──
+const uN  = (n,d=2) => n==null||isNaN(n)?'—':n.toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});
+const uP  = (n,d=2) => n==null||isNaN(n)?'—':uN(n,d)+'%';
+const uPb = (n,d=0) => n==null||isNaN(n)?'—':uN(n,d)+' pb';
+const uPcol = (n,pos) => n==null?'':n>0==pos?'var(--green)':'var(--red)';
+
+function uSet(id, val, col) {
+  const el = document.getElementById(id); if (!el) return;
+  el.textContent = val;
+  el.className = el.className.replace(/\bloading\b/,'').trim();
+  if (col) el.style.color = col;
+}
+function uLoad(id) {
+  const el = document.getElementById(id);
+  if (el && !el.classList.contains('loading')) el.classList.add('loading');
+}
+
+// ── API Key ──
+function usGetKey() {
+  const inp = document.getElementById('us-key-input')?.value?.trim();
+  if (inp && inp.length === 32) return inp;
+  return localStorage.getItem(US_KEY_LS) || null;
+}
+
+function usSaveKey(key) {
+  localStorage.setItem(US_KEY_LS, key);
+  const el = document.getElementById('us-key-input');
+  if (el) el.value = key;
+}
+
+window.usClearKey = function() {
+  localStorage.removeItem(US_KEY_LS);
+  const el = document.getElementById('us-key-input');
+  if (el) el.value = '';
+  document.getElementById('us-dashboard').style.display = 'none';
+  document.getElementById('us-prompt').style.display = '';
+};
+
+window.usSetKey = function() {
+  const k = document.getElementById('us-prompt-key')?.value?.trim();
+  if (!k || k.length !== 32) { toast('API key inválida — debe tener 32 caracteres', 'error', 3000); return; }
+  usSaveKey(k);
+  document.getElementById('us-prompt').style.display = 'none';
+  document.getElementById('us-dashboard').style.display = '';
+  usLoad_all(k);
+};
+
+// ── Fetch FRED con reintentos: directo → proxy 1 → proxy 2 ──
+const PROXIES = [
+  url => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
+  url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+];
+
+async function fetchFred(seriesId, key, startDate) {
+  const cacheKey = `${seriesId}_${startDate}`;
+  if (usCache[cacheKey]) return usCache[cacheKey];
+
+  const directUrl = `${FRED_DIRECT}?series_id=${seriesId}&api_key=${key}&file_type=json&sort_order=desc&observation_start=${startDate}&limit=500`;
+  const isLocal   = location.protocol === 'file:';
+
+  // Intentar en orden: directo (si no es local) → proxy1 → proxy2
+  const urlsToTry = isLocal
+    ? PROXIES.map(p => p(directUrl))
+    : [directUrl, ...PROXIES.map(p => p(directUrl))];
+
+  let lastErr;
+  for (const url of urlsToTry) {
+    try {
+      const r = await fetch(url, { mode: 'cors' });
+      if (!r.ok) {
+        if (r.status === 400 || r.status === 403) throw new Error(`FRED: API key inválida o serie no encontrada (${seriesId})`);
+        throw new Error(`HTTP ${r.status}`);
+      }
+      const j = await r.json();
+      if (j.error_message) throw new Error(`FRED error: ${j.error_message}`);
+      const obs = (j.observations || [])
+        .filter(o => o.value !== '.' && o.value !== '')
+        .map(o => ({ date: o.date, value: parseFloat(o.value) }))
+        .sort((a,b) => a.date.localeCompare(b.date));
+      usCache[cacheKey] = obs;
+      return obs;
+    } catch(e) {
+      lastErr = e;
+      // Si es error de API key, no reintentar con proxy
+      if (e.message.includes('inválida')) throw e;
+      // Si no es CORS, no reintentar
+      if (!e.message.includes('fetch') && !e.message.includes('CORS') && !e.message.includes('NetworkError')) throw e;
+    }
+  }
+  throw new Error(`No se pudo conectar con FRED para ${seriesId}. ${lastErr?.message || ''}`);
+}
+
+const fredLast = arr => arr?.length ? arr[arr.length-1] : null;
+const fredNAgo = (arr, months) => {
+  if (!arr?.length) return null;
+  const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - months);
+  for (let i = arr.length-1; i >= 0; i--) {
+    if (new Date(arr[i].date) <= cutoff) return arr[i];
+  }
+  return arr[0];
+};
+
+// YoY calculado desde las series de nivel
+function calcYoY(series) {
+  if (!series?.length) return null;
+  const last = fredLast(series);
+  const prev = fredNAgo(series, 12);
+  if (!last || !prev || prev.value === 0) return null;
+  return ((last.value - prev.value) / prev.value) * 100;
+}
+
+// ── Charts ──
+function usMkChart(cid, key, labels, datasets, opts = {}) {
+  const ctx = document.getElementById(cid)?.getContext('2d');
+  if (!ctx) return;
+  const ds = datasets.map(d => ({
+    label: d.lbl, data: d.data,
+    borderColor: d.col, borderWidth: 1.5,
+    backgroundColor: d.fill ? d.col+'15' : 'transparent',
+    fill: d.fill || false,
+    pointRadius: 0, pointHoverRadius: 3, tension: .3,
+    borderDash: d.dash ? [4,4] : [],
+    yAxisID: d.y2 ? 'y2' : 'y',
+    segment: d.zero ? { borderColor: ctx => ctx.p0.parsed.y < 0 ? '#f05050' : '#4f8ef7' } : undefined,
+  }));
+
+  const scales = {
+    x: { grid:{color:'#1c203528',drawBorder:false}, ticks:{color:'#545d75',font:{family:'DM Mono',size:7},maxTicksLimit:8} },
+    y: { grid:{color:'#1c203538',drawBorder:false}, ticks:{color:'#545d75',font:{family:'DM Mono',size:7},maxTicksLimit:5}, position:'left' },
+  };
+  if (opts.y2) {
+    scales.y2 = { ...scales.y, position:'right', grid:{display:false} };
+  }
+  if (opts.zero) {
+    scales.y.afterDataLimits = axis => { axis.min = Math.min(axis.min, -0.05); };
+  }
+
+  const config = {
+    type:'line', data:{labels,datasets:ds},
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{display:datasets.length>1,labels:{color:'#8892a8',font:{family:'DM Mono',size:8},boxWidth:8}},
+        tooltip:{backgroundColor:'#0e1018',borderColor:'#1c2035',borderWidth:1,
+          titleColor:'#8892a8',bodyFont:{family:'DM Mono',size:10},
+          callbacks: {
+            label: ctx => {
+              const v = ctx.parsed.y;
+              const suf = opts.pb ? ' pb' : opts.nounit ? '' : '%';
+              return ` ${ctx.dataset.label}: ${uN(v,2)}${suf}`;
+            }
+          }
+        }
+      },
+      scales
+    }
+  };
+
+  if (usCharts[key]) {
+    usCharts[key].data.labels = labels;
+    usCharts[key].data.datasets = ds;
+    usCharts[key].update('none'); return;
+  }
+  usCharts[key] = new Chart(ctx, config);
+}
+
+// Filtrar últimos N meses
+function filterMonths(series, months) {
+  const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - months);
+  return series.filter(o => new Date(o.date) >= cutoff);
+}
+
+// ── Actualizar gráfico con período ──
+window.usGPer = function(chartKey, months, btn) {
+  btn.closest('.us-per-btns').querySelectorAll('.us-pb').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  usRenderChart(chartKey, months);
+};
+
+// Datos cargados globalmente
+const US_DATA = {};
+
+function usRenderChart(key, months) {
+  const colFF = '#f0b429', colT2 = '#7eb5ff', colT10 = '#4f8ef7';
+  const colCPI = '#f05050', colPCE = '#f09030', colBEI = '#c9952a';
+  const colU3 = '#f05050', colU6 = '#f09030';
+  const colSpr = '#4f8ef7', colHY = '#f05050', colSP = '#34c87a';
+  const colM2 = '#34c87a';
+
+  if (key === 'inf' && US_DATA.cpi && US_DATA.pce) {
+    const cpiYoy = computeYoYSeries(US_DATA.cpi, months);
+    const pceYoy = computeYoYSeries(US_DATA.pce, months);
+    const lbl = cpiYoy.map(d => d.date.substring(0,7));
+    usMkChart('us-ch-inf','inf',lbl,[
+      {lbl:'CPI YoY',  data:cpiYoy.map(d=>d.value), col:colCPI, fill:false},
+      {lbl:'PCE Core', data:alignSeries(pceYoy,cpiYoy), col:colPCE, fill:false},
+    ]);
+  }
+  if (key === 'rates' && US_DATA.ff && US_DATA.t2 && US_DATA.t10) {
+    const ffF  = filterMonths(US_DATA.ff,  months);
+    const t2F  = filterMonths(US_DATA.t2,  months);
+    const t10F = filterMonths(US_DATA.t10, months);
+    const lbl  = ffF.map(d=>d.date.substring(0,7));
+    usMkChart('us-ch-rates','rates',lbl,[
+      {lbl:'Fed Funds', data:ffF.map(d=>d.value),  col:colFF,  fill:false},
+      {lbl:'T 2Y',      data:alignSeries(t2F,ffF),  col:colT2,  fill:false, dash:true},
+      {lbl:'T 10Y',     data:alignSeries(t10F,ffF), col:colT10, fill:false},
+    ]);
+  }
+  if (key === 'unemp' && US_DATA.unrate && US_DATA.u6) {
+    const u3F = filterMonths(US_DATA.unrate, months);
+    const u6F = filterMonths(US_DATA.u6,    months);
+    const lbl = u3F.map(d=>d.date.substring(0,7));
+    usMkChart('us-ch-unemp','unemp',lbl,[
+      {lbl:'U-3 Desempleo', data:u3F.map(d=>d.value), col:colU3, fill:true},
+      {lbl:'U-6 Amplio',    data:alignSeries(u6F,u3F), col:colU6, fill:false},
+    ]);
+  }
+  if (key === 'spr' && US_DATA.spr) {
+    const sprF = filterMonths(US_DATA.spr, months);
+    const lbl  = sprF.map(d=>d.date.substring(0,7));
+    usMkChart('us-ch-spr','spr',lbl,[
+      {lbl:'10Y-2Y spread', data:sprF.map(d=>d.value), col:colSpr, fill:true, zero:true},
+    ], {zero:true});
+  }
+  if (key === 'm2' && US_DATA.m2) {
+    const m2F = filterMonths(US_DATA.m2, months);
+    const lbl = m2F.map(d=>d.date.substring(0,7));
+    usMkChart('us-ch-m2','m2',lbl,[
+      {lbl:'M2 (B USD)', data:m2F.map(d=>d.value), col:colM2, fill:true},
+    ], {nounit:true});
+  }
+  if (key === 'risk' && US_DATA.hy && US_DATA.sp) {
+    const hyF = filterMonths(US_DATA.hy, months);
+    const spF = filterMonths(US_DATA.sp, months);
+    const lbl = hyF.map(d=>d.date.substring(0,7));
+    usMkChart('us-ch-risk','risk',lbl,[
+      {lbl:'HY Spread (pb)', data:hyF.map(d=>d.value), col:colHY, fill:false},
+      {lbl:'S&P 500',        data:alignSeries(spF,hyF), col:colSP, fill:false, y2:true},
+    ], {y2:true, pb:true});
+  }
+}
+
+// YoY desde series de nivel (CPI, PCE)
+function computeYoYSeries(series, months) {
+  if (!series?.length) return [];
+  const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - months);
+  return series.filter((d,i) => {
+    if (new Date(d.date) < cutoff) return false;
+    const prev = series.find(p => {
+      const dd = new Date(d.date); const pd = new Date(p.date);
+      return Math.abs((dd - pd)/(86400000*365) - 1) < 0.08;
+    });
+    if (!prev || prev.value===0) return false;
+    d._yoy = ((d.value - prev.value)/prev.value)*100;
+    return true;
+  }).map(d => ({date:d.date, value:d._yoy}));
+}
+
+// Alinear serie B a los labels de la serie A (por fecha más cercana)
+function alignSeries(seriesB, seriesA) {
+  return seriesA.map(a => {
+    const b = seriesB.find(x => x.date.substring(0,7) === a.date.substring(0,7));
+    return b ? b.value : null;
+  });
+}
+
+// ── Semáforo de ciclo ──
+function usSemaforo() {
+  const items = [
+    { l:'Curva 10Y−2Y', f:() => {
+        const v = US_DATA.spr ? fredLast(US_DATA.spr)?.value : null;
+        return {ok:v>50,w:v>-20,v:v!=null?uPb(v*100,0):'—'};
+      }
+    },
+    { l:'Desempleo U-3', f:() => {
+        const v = fredLast(US_DATA.unrate)?.value;
+        return {ok:v<4.5,w:v<6,v:v!=null?uP(v):'—'};
+      }
+    },
+    { l:'CPI YoY', f:() => {
+        const v = calcYoY(US_DATA.cpi);
+        return {ok:v<3,w:v<5,v:v!=null?uP(v):'—'};
+      }
+    },
+    { l:'Fed Funds real', f:() => {
+        const ff  = fredLast(US_DATA.ff)?.value;
+        const cpi = calcYoY(US_DATA.cpi);
+        if (ff==null||cpi==null) return {ok:false,w:true,v:'—'};
+        const r = ff - cpi;
+        return {ok:r>0&&r<3,w:r>-1,v:(r>=0?'+':'')+uN(r)+'%'};
+      }
+    },
+    { l:'HY Spread', f:() => {
+        const v = fredLast(US_DATA.hy)?.value;
+        return {ok:v<350,w:v<550,v:v!=null?uPb(v):'—'};
+      }
+    },
+    { l:'Confianza consumidor', f:() => {
+        const v = fredLast(US_DATA.sent)?.value;
+        return {ok:v>80,w:v>60,v:v!=null?uN(v,0):'—'};
+      }
+    },
+    { l:'Prod. industrial YoY', f:() => {
+        const v = calcYoY(US_DATA.indpro);
+        return {ok:v>1,w:v>-1,v:v!=null?uP(v,1):'—'};
+      }
+    },
+    { l:'M2 YoY', f:() => {
+        const v = calcYoY(US_DATA.m2);
+        return {ok:v>2&&v<10,w:v>0||v<15,v:v!=null?uP(v,1):'—'};
+      }
+    },
+    { l:'PCE Core vs 2%', f:() => {
+        const v = calcYoY(US_DATA.pce);
+        return {ok:v!=null&&v<2.5,w:v!=null&&v<3.5,v:v!=null?uP(v):'—'};
+      }
+    },
+  ];
+  const g = document.getElementById('us-semaforo'); if (!g) return;
+  g.innerHTML = items.map(it => {
+    const r = it.f();
+    const col = r.ok?'var(--green)':r.w?'var(--orange)':'var(--red)';
+    const ico = r.ok?'●':r.w?'◐':'○';
+    return `<div class="us-cycle-card">
+      <div class="us-cc-title" style="--ccc:${col}">${it.l}</div>
+      <div class="us-cc-val" style="color:${col}">${ico} ${r.v}</div>
+    </div>`;
+  }).join('');
+}
+
+// ── Indicadores derivados y análisis LDWM ──
+function usAnalysis() {
+  const ff    = fredLast(US_DATA.ff)?.value;
+  const cpi   = calcYoY(US_DATA.cpi);
+  const pce   = calcYoY(US_DATA.pce);
+  const spr   = fredLast(US_DATA.spr)?.value;
+  const hy    = fredLast(US_DATA.hy)?.value;
+  const bei   = fredLast(US_DATA.bei)?.value;
+  const unr   = fredLast(US_DATA.unrate)?.value;
+  const indpr = calcYoY(US_DATA.indpro);
+
+  if (ff!=null && cpi!=null) {
+    const rr = ff - cpi;
+    uSet('us-real-rate', (rr>=0?'+':'')+uN(rr,2)+'%', rr>0?'var(--green)':'var(--red)');
+  }
+  if (ff!=null && pce!=null) {
+    const rr2 = ff - pce;
+    uSet('us-real-rate2', (rr2>=0?'+':'')+uN(rr2,2)+'%', rr2>0?'var(--green)':'var(--red)');
+  }
+  if (hy!=null) {
+    const nivel = hy < 300 ? 'Compresión / riesgo bajo' : hy < 500 ? 'Normal' : hy < 800 ? 'Estrés moderado' : 'Estrés severo';
+    uSet('us-hy-level', uPb(hy)+' · '+nivel, hy<300?'var(--green)':hy<500?'var(--txt)':hy<800?'var(--orange)':'var(--red)');
+  }
+  if (spr!=null) {
+    uSet('us-curve', uPb(spr*100,0)+(spr<0?' ⚠ Invertida':spr<0.5?' Plana':' Normal'), spr<0?'var(--red)':spr<0.5?'var(--orange)':'var(--green)');
+  }
+  if (bei!=null && pce!=null) {
+    const prima = bei - pce;
+    uSet('us-bei-pce', (prima>=0?'+':'')+uN(prima,2)+'% · '+(prima>0.5?'Mercado espera +inflación':prima<-0.3?'Mercado espera desinflación':'Anclado'));
+  }
+
+  // Fase del ciclo
+  let phase = '—';
+  if (spr!=null && unr!=null && cpi!=null && indpr!=null) {
+    if (spr > 0.5 && unr < 5 && cpi > 2 && indpr > 1)       phase = '📈 Expansión';
+    else if (spr < 0 && unr < 5)                               phase = '⚠ Pico / Pre-recesión';
+    else if (spr < 0 && unr > 5 && indpr < 0)                 phase = '📉 Recesión';
+    else if (spr > 0 && unr > 5 && cpi < 3)                   phase = '🔄 Recuperación';
+    else                                                        phase = '↔ Transición';
+  }
+  uSet('us-cycle-phase', phase);
+
+  // Implicancias LDWM
+  const impl = document.getElementById('us-implicancias'); if (!impl) return;
+  const lines = [];
+  if (ff!=null && cpi!=null) {
+    const rr = ff - cpi;
+    if (rr > 1.5) lines.push('🔵 Tasas reales positivas → favorece USD, bonos cortos, liquidity premium');
+    else if (rr > 0) lines.push('🟡 Tasas reales positivas pero bajas → posición neutral en duration');
+    else lines.push('🔴 Tasas reales negativas → presión sobre USD, favorece EM, hard assets');
+  }
+  if (spr!=null) {
+    if (spr < 0) lines.push('🔴 Curva invertida → señal recesiva, reducir riesgo, alargar duration selectivamente');
+    else if (spr < 0.5) lines.push('🟡 Curva plana → cautela en crédito EM, vigilar spreads HY');
+    else lines.push('🟢 Curva normal → entorno favorable para carry en EM incluido Argentina');
+  }
+  if (hy!=null) {
+    if (hy < 350) lines.push('🟢 Spreads HY comprimidos → apetito por riesgo, beneficia bonos AR y EM');
+    else if (hy < 600) lines.push('🟡 Spreads HY normales → selectividad en crédito EM');
+    else lines.push('🔴 Spreads HY elevados → risk-off global, presión sobre Argentina');
+  }
+  if (cpi!=null) {
+    if (cpi > 3.5) lines.push('🔴 Inflación por encima del target → Fed restrictiva, USD fuerte');
+    else if (cpi < 2.5) lines.push('🟢 Inflación controlada → espacio para recortes Fed, positivo para EM');
+    else lines.push('🟡 Inflación convergiendo al 2% → Fed en pausa, monitorear PCE core');
+  }
+  impl.innerHTML = lines.length ? lines.join('<br>') : 'Sin suficientes datos para análisis.';
+}
+
+// ── CARGA PRINCIPAL ──
+async function usLoad_all(key) {
+  const btn = document.getElementById('us-load-btn');
+  if (btn) { btn.classList.add('loading'); document.getElementById('us-spin').style.display='inline'; }
+
+  // Reset loadings
+  ['us-gdp','us-gdpg','us-unrate','us-u6','us-payems','us-indpro',
+   'us-cpi','us-cpic','us-pce','us-bei','us-ff','us-t2','us-t10',
+   'us-spr','us-mort','us-hy','us-m2','us-sent','us-houst','us-sp'
+  ].forEach(uLoad);
+
+  const errBanner = document.getElementById('us-err-banner');
+  errBanner.style.display = 'none';
+
+  try {
+    const startLong  = '2010-01-01';
+    const startShort = '2020-01-01';
+
+    // Fetch paralelo
+    const [gdp, unrate, u6, payems, indpro, cpiAll, cpiCore,
+           pce, ff, t2, t10, bei, spr, mort, hy, m2, sent, houst, sp] = await Promise.all([
+      fetchFred('GDPC1',        key, startLong),
+      fetchFred('UNRATE',       key, startLong),
+      fetchFred('U6RATE',       key, startLong),
+      fetchFred('PAYEMS',       key, startShort),
+      fetchFred('INDPRO',       key, startLong),
+      fetchFred('CPIAUCSL',     key, startLong),
+      fetchFred('CPILFESL',     key, startLong),
+      fetchFred('PCEPILFE',     key, startLong),
+      fetchFred('FEDFUNDS',     key, startLong),
+      fetchFred('DGS2',         key, startLong),
+      fetchFred('DGS10',        key, startLong),
+      fetchFred('T10YIE',       key, startShort),
+      fetchFred('T10Y2Y',       key, startLong),
+      fetchFred('MORTGAGE30US', key, startLong),
+      fetchFred('BAMLH0A0HYM2', key, startLong),
+      fetchFred('M2SL',         key, startLong),
+      fetchFred('UMCSENT',      key, startShort),
+      fetchFred('HOUST',        key, startShort),
+      fetchFred('SP500',        key, startLong),
+    ]);
+
+    // Guardar en US_DATA
+    Object.assign(US_DATA, { gdp, unrate, u6, payems, indpro,
+      cpi:cpiAll, cpic:cpiCore, pce, ff, t2, t10, bei, spr, mort, hy, m2, sent, houst, sp });
+
+    // ── Guardar key
+    usSaveKey(key);
+
+    // ── KPIs
+    const gdpL  = fredLast(gdp);
+    const gdpP  = fredNAgo(gdp, 3);
+    const gdpYP = fredNAgo(gdp, 12);
+    if (gdpL) { uSet('us-gdp', '$'+uN(gdpL.value/1000,1)+'T'); document.getElementById('us-gdp-d').textContent = gdpL.date; }
+    if (gdpL && gdpP) {
+      const g = ((gdpL.value-gdpP.value)/gdpP.value)*4*100;
+      uSet('us-gdpg', (g>=0?'+':'')+uN(g,1)+'%', g>=0?'var(--green)':'var(--red)');
+      document.getElementById('us-gdpg-d').textContent = 'SAAR vs t-1';
+    }
+
+    const urL = fredLast(unrate);
+    if (urL) { uSet('us-unrate', uP(urL.value)); document.getElementById('us-unrate-d').textContent = urL.date; }
+    const u6L = fredLast(u6);
+    if (u6L) { uSet('us-u6', uP(u6L.value)); document.getElementById('us-u6-d').textContent = u6L.date; }
+
+    const payL = fredLast(payems);
+    if (payL) { uSet('us-payems', uN(payL.value,0)+'K'); document.getElementById('us-payems-d').textContent = payL.date; }
+    const indL = fredLast(indpro);
+    if (indL) { uSet('us-indpro', uN(indL.value,1)); document.getElementById('us-indpro-d').textContent = indL.date; }
+
+    // CPI YoY
+    const cpiYoY = calcYoY(cpiAll);
+    if (cpiYoY!=null) { uSet('us-cpi', uP(cpiYoY), cpiYoY>4?'var(--red)':cpiYoY>2.5?'var(--orange)':'var(--green)'); document.getElementById('us-cpi-d').textContent = fredLast(cpiAll)?.date||''; }
+    const cpicYoY = calcYoY(cpiCore);
+    if (cpicYoY!=null) { uSet('us-cpic', uP(cpicYoY), cpicYoY>4?'var(--red)':cpicYoY>2.5?'var(--orange)':'var(--green)'); document.getElementById('us-cpic-d').textContent = fredLast(cpiCore)?.date||''; }
+    const pceYoY = calcYoY(pce);
+    if (pceYoY!=null) { uSet('us-pce', uP(pceYoY), pceYoY>3?'var(--red)':pceYoY>2?'var(--orange)':'var(--green)'); document.getElementById('us-pce-d').textContent = fredLast(pce)?.date||''; }
+    const beiL = fredLast(bei);
+    if (beiL) { uSet('us-bei', uP(beiL.value)); document.getElementById('us-bei-d').textContent = beiL.date; }
+
+    const ffL = fredLast(ff);
+    if (ffL) { uSet('us-ff', uP(ffL.value)); document.getElementById('us-ff-d').textContent = ffL.date; }
+    const t2L = fredLast(t2);
+    if (t2L) { uSet('us-t2', uP(t2L.value)); document.getElementById('us-t2-d').textContent = t2L.date; }
+    const t10L = fredLast(t10);
+    if (t10L) { uSet('us-t10', uP(t10L.value)); document.getElementById('us-t10-d').textContent = t10L.date; }
+    const sprL = fredLast(spr);
+    if (sprL) {
+      const sprPb = sprL.value * 100;
+      uSet('us-spr', uPb(sprPb,0), sprL.value < 0?'var(--red)':sprL.value<0.5?'var(--orange)':'var(--green)');
+      document.getElementById('us-spr-d').textContent = sprL.date;
+    }
+    const mortL = fredLast(mort);
+    if (mortL) { uSet('us-mort', uP(mortL.value)); document.getElementById('us-mort-d').textContent = mortL.date; }
+    const hyL = fredLast(hy);
+    if (hyL) { uSet('us-hy', uPb(hyL.value), hyL.value>600?'var(--red)':hyL.value>400?'var(--orange)':'var(--green)'); document.getElementById('us-hy-d').textContent = hyL.date; }
+
+    const m2L = fredLast(m2);
+    if (m2L) { uSet('us-m2', '$'+uN(m2L.value/1000,1)+'T'); document.getElementById('us-m2-d').textContent = m2L.date; }
+    const sentL = fredLast(sent);
+    if (sentL) { uSet('us-sent', uN(sentL.value,0)); document.getElementById('us-sent-d').textContent = sentL.date; }
+    const houstL = fredLast(houst);
+    if (houstL) { uSet('us-houst', uN(houstL.value,0)+'K'); document.getElementById('us-houst-d').textContent = houstL.date; }
+    const spL = fredLast(sp);
+    if (spL) { uSet('us-sp', uN(spL.value,0)); document.getElementById('us-sp-d').textContent = spL.date; }
+
+    // ── Gráficos (por defecto 24 meses)
+    ['inf','rates','unemp','spr','m2','risk'].forEach(k => usRenderChart(k, 24));
+
+    // ── Semáforo y análisis
+    usSemaforo();
+    usAnalysis();
+
+    // ── Timestamp
+    const ts = new Date().toLocaleString('es-AR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
+    document.getElementById('us-ts').textContent  = ts;
+    document.getElementById('us-ts2').textContent = ts;
+
+    toast('Monitor EEUU actualizado', 'success', 2500);
+
+  } catch(err) {
+    console.error('usLoad_all:', err);
+    errBanner.innerHTML = `<div class="us-err">⚠ ${err.message}${err.message.includes('inválida')?'<br>Verificá tu API key en <a href="https://fred.stlouisfed.org/docs/api/api_key.html" target="_blank" style="color:var(--acc)">fred.stlouisfed.org</a>':''}</div>`;
+    errBanner.style.display = 'block';
+  }
+
+  if (btn) { btn.classList.remove('loading'); document.getElementById('us-spin').style.display='none'; }
+}
+
+// ── Botón Cargar desde topbar ──
+window.usLoad = function() {
+  const k = usGetKey();
+  if (!k) { toast('Ingresá tu FRED API key primero', 'error', 3000); return; }
+  Object.keys(usCache).forEach(k => delete usCache[k]); // flush cache
+  usLoad_all(k);
+};
+
+// ── Init ──
+window.usInit = function() {
+  const key = usGetKey();
+  if (key) {
+    document.getElementById('us-key-input').value = key;
+    document.getElementById('us-prompt').style.display = 'none';
+    document.getElementById('us-dashboard').style.display = '';
+    usLoad_all(key);
+  }
+};
+
+})(); // fin IIFE usmonitor
 
 </script>
 </body>
