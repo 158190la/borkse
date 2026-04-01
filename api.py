@@ -805,6 +805,62 @@ def api_treasury():
         return jsonify({'ok': False, 'msg': str(e)}), 500
 
 
+# ── /api/fred ──────────────────────────────────────────────────────────────────
+# Proxy para FRED (Federal Reserve Bank of St. Louis).
+# La API key se configura como env var FRED_API_KEY en Railway.
+# GET /api/fred?series=GDPC1&start=2010-01-01
+# Respuesta: { ok: true, data: [{date, value}, ...] }
+# ──────────────────────────────────────────────────────────────────────────────
+
+_FRED_CACHE = {}   # cache_key -> {'data': [...], 'ts': float}
+_FRED_TTL   = 3600  # 1 hora
+
+@app.route('/api/fred', methods=['GET'])
+def api_fred():
+    import time
+    series_id  = request.args.get('series', '').strip().upper()
+    start_date = request.args.get('start', '2010-01-01').strip()
+
+    if not series_id:
+        return jsonify({'ok': False, 'msg': 'Parámetro series requerido'}), 400
+
+    fred_key = os.environ.get('FRED_API_KEY', '').strip()
+    if not fred_key:
+        return jsonify({'ok': False, 'msg': 'FRED_API_KEY no configurada en el servidor'}), 503
+
+    cache_key = f'{series_id}_{start_date}'
+    now = time.time()
+    cached = _FRED_CACHE.get(cache_key)
+    if cached and now - cached['ts'] < _FRED_TTL:
+        return jsonify({'ok': True, 'data': cached['data'], 'cached': True})
+
+    url = (
+        f'https://api.stlouisfed.org/fred/series/observations'
+        f'?series_id={series_id}&api_key={fred_key}'
+        f'&file_type=json&sort_order=asc&observation_start={start_date}&limit=500'
+    )
+    try:
+        r = req.get(url, timeout=15, headers={'Accept': 'application/json'})
+        if r.status_code == 400:
+            return jsonify({'ok': False, 'msg': f'FRED: serie no encontrada o parámetros inválidos ({series_id})'}), 400
+        if r.status_code == 403:
+            return jsonify({'ok': False, 'msg': 'FRED: API key inválida o sin permisos'}), 403
+        if not r.ok:
+            return jsonify({'ok': False, 'msg': f'FRED HTTP {r.status_code}'}), 502
+        j = r.json()
+        if j.get('error_message'):
+            return jsonify({'ok': False, 'msg': f'FRED: {j["error_message"]}'}), 400
+        obs = [
+            {'date': o['date'], 'value': float(o['value'])}
+            for o in j.get('observations', [])
+            if o.get('value') not in ('.', '', None)
+        ]
+        _FRED_CACHE[cache_key] = {'data': obs, 'ts': now}
+        return jsonify({'ok': True, 'data': obs, 'cached': False})
+    except Exception as e:
+        return jsonify({'ok': False, 'msg': str(e)}), 500
+
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)

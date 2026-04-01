@@ -2610,34 +2610,17 @@ if __name__ == '__main__':
           <h1>Monitor Economía EE.UU.</h1>
           <small>API FRED · St. Louis Fed · Datos oficiales · Última carga: <span id="us-ts">—</span></small>
         </div>
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-          <div class="us-apikey-row">
-            <input class="us-key-input" id="us-key-input" type="password" placeholder="FRED API Key (32 chars)">
-            <button class="us-btn" id="us-load-btn" onclick="usLoad()">
-              <span id="us-spin" style="display:none">⟳</span>
-              ↻ Cargar
-            </button>
-            <button class="us-btn-sm" onclick="usClearKey()">✕ Limpiar</button>
-          </div>
-          <div class="us-key-note">Key gratuita en <a href="https://fred.stlouisfed.org/docs/api/api_key.html" target="_blank">fred.stlouisfed.org</a></div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <button class="us-btn" id="us-load-btn" onclick="usLoad()">
+            <span id="us-spin" style="display:none">⟳</span>
+            ↻ Actualizar
+          </button>
+          <span class="us-key-note">Datos vía FRED · St. Louis Fed</span>
         </div>
       </div>
 
-      <!-- Prompt si no hay key -->
-      <div id="us-prompt" style="padding:24px">
-        <div class="us-prompt">
-          <h2>Conectar con FRED</h2>
-          <p>Para acceder a los datos macro de EE.UU. necesitás una API key gratuita del Federal Reserve Bank of St. Louis. El proceso toma menos de 2 minutos y no requiere tarjeta de crédito.</p>
-          <input class="us-prompt-input" id="us-prompt-key" type="text" placeholder="Pegá tu FRED API key aquí (32 caracteres)">
-          <button class="us-prompt-btn" onclick="usSetKey()">Guardar key y cargar datos →</button>
-          <div class="us-prompt-link">
-            Obtener key gratuita: <a href="https://fred.stlouisfed.org/docs/api/api_key.html" target="_blank">fred.stlouisfed.org/docs/api/api_key.html</a>
-          </div>
-        </div>
-      </div>
-
-      <!-- Dashboard (se muestra cuando hay key) -->
-      <div id="us-dashboard" style="display:none">
+      <!-- Dashboard -->
+      <div id="us-dashboard">
         <div class="us-body">
 
           <!-- KPIs Ciclo Macro -->
@@ -5341,7 +5324,9 @@ function prRunScen(sc) {
     // Base monetaria: crece por PBI (remonetización) + política BCRA
     // BM mensual = BM × (1 + pbi/12 × factor_rem + bmExpM)
     // Además BADLAR/12 representa la tasa de interés que absorbe pesos (si positiva = más demanda de M)
+
     const crMonetario = pbi/12 * 0.8 + bmExpM/100 + Math.max(0, tasaReal/100/12);
+
     aBM.push(Math.round(bmCur));
     const m3Cur = bmCur * mult;
     aM3.push(Math.round(m3Cur));
@@ -5657,26 +5642,11 @@ window.prInit = async function() {
 })(); // fin IIFE predictor
 
 // ══════════════════════════════════════════════════════════
-// MONITOR ECONOMÍA EEUU · API FRED
+// MONITOR ECONOMÍA EEUU · API FRED (via api.py)
 // ══════════════════════════════════════════════════════════
 (function(){
 
-// CORS proxy — necesario cuando se abre el archivo localmente (file://)
-// corsproxy.io agrega los headers Access-Control-Allow-Origin requeridos
-const FRED_DIRECT = 'https://api.stlouisfed.org/fred/series/observations';
-const CORS_PROXY  = 'https://corsproxy.io/?url=';
-const US_KEY_LS   = 'ldwm_fred_api_key';
-
-// Construye la URL FRED con o sin proxy CORS según origen
-function buildFredUrl(seriesId, key, startDate) {
-  const params = `series_id=${seriesId}&api_key=${key}&file_type=json&sort_order=desc&observation_start=${startDate}&limit=500`;
-  const directUrl = `${FRED_DIRECT}?${params}`;
-  // Desde file:// necesitamos el proxy; desde http/https podemos ir directo
-  const isLocal = location.protocol === 'file:';
-  return isLocal ? `${CORS_PROXY}${encodeURIComponent(directUrl)}` : directUrl;
-}
-
-// Cache de series cargadas: { seriesId_period: [{date,value}] }
+// Cache de series cargadas: { seriesId_startDate: [{date,value}] }
 const usCache = {};
 // Chart instances
 const usCharts = {};
@@ -5698,79 +5668,14 @@ function uLoad(id) {
   if (el && !el.classList.contains('loading')) el.classList.add('loading');
 }
 
-// ── API Key ──
-function usGetKey() {
-  const inp = document.getElementById('us-key-input')?.value?.trim();
-  if (inp && inp.length === 32) return inp;
-  return localStorage.getItem(US_KEY_LS) || null;
-}
-
-function usSaveKey(key) {
-  localStorage.setItem(US_KEY_LS, key);
-  const el = document.getElementById('us-key-input');
-  if (el) el.value = key;
-}
-
-window.usClearKey = function() {
-  localStorage.removeItem(US_KEY_LS);
-  const el = document.getElementById('us-key-input');
-  if (el) el.value = '';
-  document.getElementById('us-dashboard').style.display = 'none';
-  document.getElementById('us-prompt').style.display = '';
-};
-
-window.usSetKey = function() {
-  const k = document.getElementById('us-prompt-key')?.value?.trim();
-  if (!k || k.length !== 32) { toast('API key inválida — debe tener 32 caracteres', 'error', 3000); return; }
-  usSaveKey(k);
-  document.getElementById('us-prompt').style.display = 'none';
-  document.getElementById('us-dashboard').style.display = '';
-  usLoad_all(k);
-};
-
-// ── Fetch FRED con reintentos: directo → proxy 1 → proxy 2 ──
-const PROXIES = [
-  url => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
-  url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-];
-
-async function fetchFred(seriesId, key, startDate) {
+// ── Fetch FRED vía backend ──
+async function fetchFred(seriesId, startDate) {
   const cacheKey = `${seriesId}_${startDate}`;
   if (usCache[cacheKey]) return usCache[cacheKey];
-
-  const directUrl = `${FRED_DIRECT}?series_id=${seriesId}&api_key=${key}&file_type=json&sort_order=desc&observation_start=${startDate}&limit=500`;
-  const isLocal   = location.protocol === 'file:';
-
-  // Intentar en orden: directo (si no es local) → proxy1 → proxy2
-  const urlsToTry = isLocal
-    ? PROXIES.map(p => p(directUrl))
-    : [directUrl, ...PROXIES.map(p => p(directUrl))];
-
-  let lastErr;
-  for (const url of urlsToTry) {
-    try {
-      const r = await fetch(url, { mode: 'cors' });
-      if (!r.ok) {
-        if (r.status === 400 || r.status === 403) throw new Error(`FRED: API key inválida o serie no encontrada (${seriesId})`);
-        throw new Error(`HTTP ${r.status}`);
-      }
-      const j = await r.json();
-      if (j.error_message) throw new Error(`FRED error: ${j.error_message}`);
-      const obs = (j.observations || [])
-        .filter(o => o.value !== '.' && o.value !== '')
-        .map(o => ({ date: o.date, value: parseFloat(o.value) }))
-        .sort((a,b) => a.date.localeCompare(b.date));
-      usCache[cacheKey] = obs;
-      return obs;
-    } catch(e) {
-      lastErr = e;
-      // Si es error de API key, no reintentar con proxy
-      if (e.message.includes('inválida')) throw e;
-      // Si no es CORS, no reintentar
-      if (!e.message.includes('fetch') && !e.message.includes('CORS') && !e.message.includes('NetworkError')) throw e;
-    }
-  }
-  throw new Error(`No se pudo conectar con FRED para ${seriesId}. ${lastErr?.message || ''}`);
+  const j = await API.get(`/api/fred?series=${encodeURIComponent(seriesId)}&start=${encodeURIComponent(startDate)}`);
+  if (!j.ok) throw new Error(j.msg || `Error cargando ${seriesId}`);
+  usCache[cacheKey] = j.data;
+  return j.data;
 }
 
 const fredLast = arr => arr?.length ? arr[arr.length-1] : null;
@@ -6083,7 +5988,7 @@ function usAnalysis() {
 }
 
 // ── CARGA PRINCIPAL ──
-async function usLoad_all(key) {
+async function usLoad_all() {
   const btn = document.getElementById('us-load-btn');
   if (btn) { btn.classList.add('loading'); document.getElementById('us-spin').style.display='inline'; }
 
@@ -6103,33 +6008,30 @@ async function usLoad_all(key) {
     // Fetch paralelo
     const [gdp, unrate, u6, payems, indpro, cpiAll, cpiCore,
            pce, ff, t2, t10, bei, spr, mort, hy, m2, sent, houst, sp] = await Promise.all([
-      fetchFred('GDPC1',        key, startLong),
-      fetchFred('UNRATE',       key, startLong),
-      fetchFred('U6RATE',       key, startLong),
-      fetchFred('PAYEMS',       key, startShort),
-      fetchFred('INDPRO',       key, startLong),
-      fetchFred('CPIAUCSL',     key, startLong),
-      fetchFred('CPILFESL',     key, startLong),
-      fetchFred('PCEPILFE',     key, startLong),
-      fetchFred('FEDFUNDS',     key, startLong),
-      fetchFred('DGS2',         key, startLong),
-      fetchFred('DGS10',        key, startLong),
-      fetchFred('T10YIE',       key, startShort),
-      fetchFred('T10Y2Y',       key, startLong),
-      fetchFred('MORTGAGE30US', key, startLong),
-      fetchFred('BAMLH0A0HYM2', key, startLong),
-      fetchFred('M2SL',         key, startLong),
-      fetchFred('UMCSENT',      key, startShort),
-      fetchFred('HOUST',        key, startShort),
-      fetchFred('SP500',        key, startLong),
+      fetchFred('GDPC1',        startLong),
+      fetchFred('UNRATE',       startLong),
+      fetchFred('U6RATE',       startLong),
+      fetchFred('PAYEMS',       startShort),
+      fetchFred('INDPRO',       startLong),
+      fetchFred('CPIAUCSL',     startLong),
+      fetchFred('CPILFESL',     startLong),
+      fetchFred('PCEPILFE',     startLong),
+      fetchFred('FEDFUNDS',     startLong),
+      fetchFred('DGS2',         startLong),
+      fetchFred('DGS10',        startLong),
+      fetchFred('T10YIE',       startShort),
+      fetchFred('T10Y2Y',       startLong),
+      fetchFred('MORTGAGE30US', startLong),
+      fetchFred('BAMLH0A0HYM2', startLong),
+      fetchFred('M2SL',         startLong),
+      fetchFred('UMCSENT',      startShort),
+      fetchFred('HOUST',        startShort),
+      fetchFred('SP500',        startLong),
     ]);
 
     // Guardar en US_DATA
     Object.assign(US_DATA, { gdp, unrate, u6, payems, indpro,
       cpi:cpiAll, cpic:cpiCore, pce, ff, t2, t10, bei, spr, mort, hy, m2, sent, houst, sp });
-
-    // ── Guardar key
-    usSaveKey(key);
 
     // ── KPIs
     const gdpL  = fredLast(gdp);
@@ -6204,7 +6106,7 @@ async function usLoad_all(key) {
 
   } catch(err) {
     console.error('usLoad_all:', err);
-    errBanner.innerHTML = `<div class="us-err">⚠ ${err.message}${err.message.includes('inválida')?'<br>Verificá tu API key en <a href="https://fred.stlouisfed.org/docs/api/api_key.html" target="_blank" style="color:var(--acc)">fred.stlouisfed.org</a>':''}</div>`;
+    errBanner.innerHTML = `<div class="us-err">⚠ ${err.message}</div>`;
     errBanner.style.display = 'block';
   }
 
@@ -6213,21 +6115,13 @@ async function usLoad_all(key) {
 
 // ── Botón Cargar desde topbar ──
 window.usLoad = function() {
-  const k = usGetKey();
-  if (!k) { toast('Ingresá tu FRED API key primero', 'error', 3000); return; }
   Object.keys(usCache).forEach(k => delete usCache[k]); // flush cache
-  usLoad_all(k);
+  usLoad_all();
 };
 
 // ── Init ──
 window.usInit = function() {
-  const key = usGetKey();
-  if (key) {
-    document.getElementById('us-key-input').value = key;
-    document.getElementById('us-prompt').style.display = 'none';
-    document.getElementById('us-dashboard').style.display = '';
-    usLoad_all(key);
-  }
+  usLoad_all();
 };
 
 })(); // fin IIFE usmonitor
