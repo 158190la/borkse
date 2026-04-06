@@ -2687,9 +2687,9 @@ if __name__ == '__main__':
             </div>
             <div class="us-kpi" style="--ukc:var(--acc2)">
               <div class="us-kpi-l">BEI 10Y<br>T10YIE</div>
-              <div class="us-kpi-v loading" id="us-bei">—</div>
+              <div class="us-kpi-v loading" id="us-bei-top">—</div>
               <div class="us-kpi-s">Inflación implícita de mercado</div>
-              <div class="us-kpi-d" id="us-bei-d">—</div>
+              <div class="us-kpi-d" id="us-bei-top-d">—</div>
             </div>
           </div>
 
@@ -2720,22 +2720,10 @@ if __name__ == '__main__':
               <div class="us-kpi-s">pb · inversión = recesión</div>
               <div class="us-kpi-d" id="us-spr-d">—</div>
             </div>
-            <div class="us-kpi" style="--ukc:var(--orange)">
-              <div class="us-kpi-l">Mortgage 30Y<br>MORTGAGE30US</div>
-              <div class="us-kpi-v loading" id="us-mort">—</div>
-              <div class="us-kpi-s">% tasa fija</div>
-              <div class="us-kpi-d" id="us-mort-d">—</div>
-            </div>
-            <div class="us-kpi" style="--ukc:var(--red)">
-              <div class="us-kpi-l">Spread HY<br>BAMLH0A0HYM2</div>
-              <div class="us-kpi-v loading" id="us-hy">—</div>
-              <div class="us-kpi-s">pb sobre Treasuries</div>
-              <div class="us-kpi-d" id="us-hy-d">—</div>
-            </div>
           </div>
 
           <!-- KPIs Monetarios -->
-          <div class="us-sec"><span class="us-sec-tag green">Monetario · Crédito · Consumo</span><div class="us-sec-line"></div></div>
+          <div class="us-sec"><span class="us-sec-tag green">Monetario · Consumo</span><div class="us-sec-line"></div></div>
           <div class="us-kpi-grid">
             <div class="us-kpi" style="--ukc:var(--green)">
               <div class="us-kpi-l">M2 Money Supply<br>M2SL</div>
@@ -2754,12 +2742,6 @@ if __name__ == '__main__':
               <div class="us-kpi-v loading" id="us-houst">—</div>
               <div class="us-kpi-s">Miles de unidades</div>
               <div class="us-kpi-d" id="us-houst-d">—</div>
-            </div>
-            <div class="us-kpi" style="--ukc:var(--orange)">
-              <div class="us-kpi-l">Índice S&amp;P 500<br>SP500</div>
-              <div class="us-kpi-v loading" id="us-sp">—</div>
-              <div class="us-kpi-s">Precio mensual cierre</div>
-              <div class="us-kpi-d" id="us-sp-d">—</div>
             </div>
           </div>
 
@@ -2821,6 +2803,199 @@ if __name__ == '__main__':
               </div>
               <div class="us-cwrap"><canvas id="us-ch-m2"></canvas></div>
             </div>
+          </div>
+
+          <!-- ═══ YIELD CURVE ═══ -->
+          <div class="us-sec"><span class="us-sec-tag gold">Curva de Rendimientos EE.UU.</span><div class="us-sec-line"></div></div>
+          <div style="display:grid;grid-template-columns:220px 1fr;gap:12px;margin-bottom:16px">
+            <div style="background:var(--surf);border:1px solid var(--bdr);border-radius:var(--radius);padding:14px">
+              <div style="font-family:var(--mono);font-size:9px;color:var(--txt3);text-transform:uppercase;letter-spacing:.1em;margin-bottom:10px">Snapshot actual</div>
+              <div class="us-kpi-grid" style="grid-template-columns:1fr 1fr;gap:6px">
+                <div class="us-kpi" style="--ukc:var(--acc2);padding:8px">
+                  <div class="us-kpi-l">3M T-Bill<br>DGS3MO</div>
+                  <div class="us-kpi-v loading" id="us-t3m" style="font-size:16px">—</div>
+                  <div class="us-kpi-d" id="us-t3m-d">—</div>
+                </div>
+                <div class="us-kpi" style="--ukc:var(--acc);padding:8px">
+                  <div class="us-kpi-l">30Y Treasury<br>DGS30</div>
+                  <div class="us-kpi-v loading" id="us-t30" style="font-size:16px">—</div>
+                  <div class="us-kpi-d" id="us-t30-d">—</div>
+                </div>
+                <div class="us-kpi" style="--ukc:var(--gold2);padding:8px;grid-column:1/-1">
+                  <div class="us-kpi-l">Target Fed (rango)</div>
+                  <div class="us-kpi-v loading" id="us-fedtarget" style="font-size:15px">—</div>
+                  <div class="us-kpi-d" id="us-fedtarget-d">—</div>
+                </div>
+                <div class="us-kpi" style="--ukc:var(--green);padding:8px;grid-column:1/-1">
+                  <div class="us-kpi-l">Tasa real corta (3M−CPI)</div>
+                  <div class="us-kpi-v loading" id="us-rsr" style="font-size:15px">—</div>
+                  <div class="us-kpi-s" style="font-size:8px">Tasa libre de riesgo real</div>
+                </div>
+              </div>
+            </div>
+            <div style="background:var(--surf);border:1px solid var(--bdr);border-radius:var(--radius);padding:14px">
+              <div style="font-family:var(--mono);font-size:9px;color:var(--txt3);text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">Yields por tramo — último dato</div>
+              <div style="height:140px"><canvas id="us-ch-curve"></canvas></div>
+            </div>
+          </div>
+
+          <!-- ═══ EXPECTATIVAS DE MERCADO ═══ -->
+          <div class="us-sec"><span class="us-sec-tag red">Expectativas de Mercado · Inflación y Fed</span><div class="us-sec-line"></div></div>
+          <!-- KPIs inflación implícita -->
+          <div class="us-kpi-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:12px">
+            <div class="us-kpi" style="--ukc:var(--orange)">
+              <div class="us-kpi-l">BEI 5Y<br>T5YIE</div>
+              <div class="us-kpi-v loading" id="us-bei5">—</div>
+              <div class="us-kpi-s">Inflación implícita 5 años</div>
+              <div class="us-kpi-d" id="us-bei5-d">—</div>
+            </div>
+            <div class="us-kpi" style="--ukc:var(--gold2)">
+              <div class="us-kpi-l">BEI 10Y<br>T10YIE</div>
+              <div class="us-kpi-v loading" id="us-bei">—</div>
+              <div class="us-kpi-s">Inflación implícita 10 años</div>
+              <div class="us-kpi-d" id="us-bei-d">—</div>
+            </div>
+            <div class="us-kpi" style="--ukc:var(--acc2)">
+              <div class="us-kpi-l">5Y5Y Forward<br>T5YIFR</div>
+              <div class="us-kpi-v loading" id="us-fwd55">—</div>
+              <div class="us-kpi-s">Inflación esperada L/P mercado</div>
+              <div class="us-kpi-d" id="us-fwd55-d">—</div>
+            </div>
+            <div class="us-kpi" style="--ukc:var(--green)">
+              <div class="us-kpi-l">Credibilidad Fed<br>5Y5Y vs 2%</div>
+              <div class="us-kpi-v loading" id="us-fedbias">—</div>
+              <div class="us-kpi-s">Desvío vs target inflación</div>
+            </div>
+          </div>
+          <!-- TIPS real yields -->
+          <div class="us-kpi-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:12px">
+            <div class="us-kpi" style="--ukc:var(--acc)">
+              <div class="us-kpi-l">TIPS Real 10Y<br>DFII10</div>
+              <div class="us-kpi-v loading" id="us-tips10">—</div>
+              <div class="us-kpi-s">Yield real de mercado</div>
+              <div class="us-kpi-d" id="us-tips10-d">—</div>
+            </div>
+            <div class="us-kpi" style="--ukc:var(--acc2)">
+              <div class="us-kpi-l">TIPS Real 5Y<br>DFII5</div>
+              <div class="us-kpi-v loading" id="us-tips5">—</div>
+              <div class="us-kpi-s">Yield real de mercado</div>
+              <div class="us-kpi-d" id="us-tips5-d">—</div>
+            </div>
+            <div class="us-kpi" style="--ukc:var(--green);grid-column:3/-1">
+              <div class="us-kpi-l">Lectura rápida</div>
+              <div style="font-family:var(--mono);font-size:9px;color:var(--txt2);line-height:1.7;padding-top:4px">
+                BEI = Nominals − TIPS (inflación implícita de mercado)<br>
+                5Y5Y fwd = expectativa de inflación "de largo plazo" del mercado<br>
+                TIPS real &gt; 2% → política monetaria restrictiva real
+              </div>
+            </div>
+          </div>
+          <!-- Chart: inflación implícita histórica + TIPS -->
+          <div class="us-charts" style="grid-template-columns:1fr 1fr;margin-bottom:16px">
+            <div class="us-cbox">
+              <div class="us-chead">
+                <span class="us-ctitle">Inflación Implícita de Mercado (BEI %)</span>
+                <div class="us-per-btns">
+                  <button class="us-pb active" onclick="usGPer('bei',24,this)">2A</button>
+                  <button class="us-pb" onclick="usGPer('bei',60,this)">5A</button>
+                </div>
+              </div>
+              <div class="us-cwrap"><canvas id="us-ch-bei"></canvas></div>
+            </div>
+            <div class="us-cbox">
+              <div class="us-chead">
+                <span class="us-ctitle">Yields Reales TIPS 5Y / 10Y (%)</span>
+                <div class="us-per-btns">
+                  <button class="us-pb active" onclick="usGPer('reals',24,this)">2A</button>
+                  <button class="us-pb" onclick="usGPer('reals',60,this)">5A</button>
+                </div>
+              </div>
+              <div class="us-cwrap"><canvas id="us-ch-reals"></canvas></div>
+            </div>
+          </div>
+
+          <!-- FOMC SEP vs Actual -->
+          <div class="us-sec"><span class="us-sec-tag gold">FOMC SEP Mar-2025 vs Datos Actuales</span><div class="us-sec-line"></div></div>
+          <div style="overflow-x:auto;margin-bottom:16px">
+            <table class="us-dot-tbl" style="width:100%">
+              <thead><tr>
+                <th style="text-align:left">Variable</th>
+                <th>Real 2024</th>
+                <th>SEP 2025</th><th>SEP 2026</th><th>SEP 2027</th><th>L/P</th>
+                <th style="color:var(--acc2)">Actual FRED</th>
+              </tr></thead>
+              <tbody>
+                <tr>
+                  <td>PBI Real QoQ a/a</td>
+                  <td>2.5%</td><td>1.7%</td><td>1.8%</td><td>1.8%</td><td>1.8%</td>
+                  <td style="color:var(--acc2);font-weight:600" id="us-sep-gdp-act">—</td>
+                </tr>
+                <tr>
+                  <td>Desempleo U-3</td>
+                  <td>4.2%</td><td>4.4%</td><td>4.4%</td><td>4.3%</td><td>4.2%</td>
+                  <td style="color:var(--acc2);font-weight:600" id="us-sep-unem-act">—</td>
+                </tr>
+                <tr>
+                  <td>PCE Core YoY</td>
+                  <td>2.8%</td><td>2.8%</td><td>2.2%</td><td>2.0%</td><td>2.0%</td>
+                  <td style="color:var(--acc2);font-weight:600" id="us-sep-pce-act">—</td>
+                </tr>
+                <tr>
+                  <td>CPI YoY</td>
+                  <td>2.9%</td><td>2.7%</td><td>2.3%</td><td>2.1%</td><td>—</td>
+                  <td style="color:var(--acc2);font-weight:600" id="us-sep-cpi-act">—</td>
+                </tr>
+                <tr>
+                  <td>Fed Funds (mediana)</td>
+                  <td>4.3%</td><td>3.9%</td><td>3.4%</td><td>3.1%</td><td>3.0%</td>
+                  <td style="color:var(--acc2);font-weight:600" id="us-sep-ff-act">—</td>
+                </tr>
+              </tbody>
+            </table>
+            <div style="font-family:var(--mono);font-size:9px;color:var(--txt3);margin-top:6px">
+              Fuente SEP: FOMC Summary of Economic Projections, Reunión Mar-2025 · Medianas de participantes · L/P = largo plazo
+            </div>
+          </div>
+
+          <!-- ═══ SPREADS & CRÉDITO ═══ -->
+          <div class="us-sec"><span class="us-sec-tag red">Spreads de Crédito · HY · IG</span><div class="us-sec-line"></div></div>
+          <div class="us-kpi-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:12px">
+            <div class="us-kpi" style="--ukc:var(--red)">
+              <div class="us-kpi-l">Spread HY (OAS)<br>BAMLH0A0HYM2</div>
+              <div class="us-kpi-v loading" id="us-hy">—</div>
+              <div class="us-kpi-s">pb sobre Treasuries</div>
+              <div class="us-kpi-d" id="us-hy-d">—</div>
+            </div>
+            <div class="us-kpi" style="--ukc:var(--orange)">
+              <div class="us-kpi-l">Spread IG (OAS)<br>BAMLC0A0CM</div>
+              <div class="us-kpi-v loading" id="us-ig">—</div>
+              <div class="us-kpi-s">pb sobre Treasuries</div>
+              <div class="us-kpi-d" id="us-ig-d">—</div>
+            </div>
+            <div class="us-kpi" style="--ukc:var(--acc)">
+              <div class="us-kpi-l">Spread HY−IG<br>Prima de riesgo</div>
+              <div class="us-kpi-v" id="us-hyig-spr" style="font-size:16px">—</div>
+              <div class="us-kpi-s">Exceso HY vs IG</div>
+            </div>
+            <div class="us-kpi" style="--ukc:var(--orange)">
+              <div class="us-kpi-l">Mortgage 30Y<br>MORTGAGE30US</div>
+              <div class="us-kpi-v loading" id="us-mort">—</div>
+              <div class="us-kpi-s">% tasa fija</div>
+              <div class="us-kpi-d" id="us-mort-d">—</div>
+            </div>
+          </div>
+          <div class="us-charts" style="grid-template-columns:1fr 1fr;margin-bottom:16px">
+            <div class="us-cbox">
+              <div class="us-chead">
+                <span class="us-ctitle">Spreads HY · IG OAS (pb)</span>
+                <div class="us-per-btns">
+                  <button class="us-pb active" onclick="usGPer('spreads',24,this)">2A</button>
+                  <button class="us-pb" onclick="usGPer('spreads',60,this)">5A</button>
+                  <button class="us-pb" onclick="usGPer('spreads',120,this)">10A</button>
+                </div>
+              </div>
+              <div class="us-cwrap"><canvas id="us-ch-spreads"></canvas></div>
+            </div>
             <div class="us-cbox">
               <div class="us-chead">
                 <span class="us-ctitle">Spread HY · S&amp;P 500 (eje 2)</span>
@@ -2834,26 +3009,51 @@ if __name__ == '__main__':
             </div>
           </div>
 
+          <!-- ═══ COMMODITIES & DOLLAR ═══ -->
+          <div class="us-sec"><span class="us-sec-tag">Commodities · Dólar · Ahorro</span><div class="us-sec-line"></div></div>
+          <div class="us-kpi-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:12px">
+            <div class="us-kpi" style="--ukc:var(--gold)">
+              <div class="us-kpi-l">WTI Crudo<br>DCOILWTICO</div>
+              <div class="us-kpi-v loading" id="us-wti">—</div>
+              <div class="us-kpi-s">USD/barril</div>
+              <div class="us-kpi-d" id="us-wti-d">—</div>
+            </div>
+            <div class="us-kpi" style="--ukc:var(--acc)">
+              <div class="us-kpi-l">Dólar Real Broad<br>DTWEXBGS</div>
+              <div class="us-kpi-v loading" id="us-dxy">—</div>
+              <div class="us-kpi-s">Índice Jan-2006=100</div>
+              <div class="us-kpi-d" id="us-dxy-d">—</div>
+            </div>
+            <div class="us-kpi" style="--ukc:var(--green)">
+              <div class="us-kpi-l">Ahorro Personal<br>PSAVERT</div>
+              <div class="us-kpi-v loading" id="us-psav">—</div>
+              <div class="us-kpi-s">% ingreso disponible</div>
+              <div class="us-kpi-d" id="us-psav-d">—</div>
+            </div>
+            <div class="us-kpi" style="--ukc:var(--acc)">
+              <div class="us-kpi-l">S&amp;P 500<br>SP500</div>
+              <div class="us-kpi-v loading" id="us-sp">—</div>
+              <div class="us-kpi-s">Precio mensual cierre</div>
+              <div class="us-kpi-d" id="us-sp-d">—</div>
+            </div>
+          </div>
+          <div class="us-charts" style="grid-template-columns:1fr;margin-bottom:16px">
+            <div class="us-cbox">
+              <div class="us-chead">
+                <span class="us-ctitle">WTI Crudo (USD) · Dólar Real Broad (eje 2)</span>
+                <div class="us-per-btns">
+                  <button class="us-pb active" onclick="usGPer('oil',24,this)">2A</button>
+                  <button class="us-pb" onclick="usGPer('oil',60,this)">5A</button>
+                  <button class="us-pb" onclick="usGPer('oil',120,this)">10A</button>
+                </div>
+              </div>
+              <div class="us-cwrap"><canvas id="us-ch-oil"></canvas></div>
+            </div>
+          </div>
+
           <!-- Semáforo ciclo -->
           <div class="us-sec"><span class="us-sec-tag">Semáforo de Ciclo Económico</span><div class="us-sec-line"></div></div>
           <div class="us-cycle-grid" id="us-semaforo"></div>
-
-          <!-- Proyecciones FOMC (estáticas actualizables) -->
-          <div class="us-sec"><span class="us-sec-tag gold">Proyecciones FOMC · Dic 2025</span><div class="us-sec-line"></div></div>
-          <div class="us-dot-wrap">
-            <div class="us-dot-title">Summary of Economic Projections (SEP) — Mediana de participantes · Fuente: FRED Blog / Fed</div>
-            <table class="us-dot-tbl">
-              <thead><tr>
-                <th>Variable</th><th>Real 2024</th><th>Proj. 2025</th><th>Proj. 2026</th><th>Proj. 2027</th><th>L/P</th>
-              </tr></thead>
-              <tbody>
-                <tr><td>PBI Real (% var.)</td><td>2.5%</td><td>1.7%</td><td>2.3%</td><td>2.1%</td><td>1.8%</td></tr>
-                <tr><td>Desempleo Q4 (%)</td><td>4.2%</td><td>4.5%</td><td>4.4%</td><td>4.2%</td><td>4.2%</td></tr>
-                <tr><td>PCE Core YoY (%)</td><td>2.8%</td><td>2.5%</td><td>2.5%</td><td>2.2%</td><td>2.0%</td></tr>
-                <tr><td>Fed Funds Rate (%)</td><td>4.3%</td><td>4.3%</td><td>3.9%</td><td>3.4%</td><td>3.0%</td></tr>
-              </tbody>
-            </table>
-          </div>
 
           <!-- Análisis de contexto derivado -->
           <div class="us-sec"><span class="us-sec-tag">Análisis Derivado · Relevancia LDWM</span><div class="us-sec-line"></div></div>
@@ -2882,7 +3082,7 @@ if __name__ == '__main__':
           </div>
 
           <div style="font-family:var(--mono);font-size:9px;color:var(--txt3);border:1px solid var(--bdr);border-radius:var(--radius);padding:9px 13px;line-height:1.8">
-            <b>FUENTE:</b> Federal Reserve Economic Data (FRED) · Federal Reserve Bank of St. Louis. Series: GDPC1, UNRATE, U6RATE, CPIAUCSL, CPILFESL, PCEPILFE, FEDFUNDS, DGS2, DGS10, T10YIE, T10Y2Y, MORTGAGE30US, BAMLH0A0HYM2, M2SL, UMCSENT, PAYEMS, INDPRO, HOUST, SP500. Proyecciones FOMC: SEP Dic-2025. Uso interno LDWM · No constituye asesoramiento de inversión.
+            <b>FUENTE:</b> Federal Reserve Economic Data (FRED) · Federal Reserve Bank of St. Louis. Series: GDPC1, UNRATE, U6RATE, CPIAUCSL, CPILFESL, PCEPILFE, FEDFUNDS, DGS3MO, DGS2, DGS10, DGS30, T10YIE, T5YIE, T5YIFR, T10Y2Y, DFII5, DFII10, DFEDTARU, DFEDTARL, MORTGAGE30US, BAMLH0A0HYM2, BAMLC0A0CM, M2SL, UMCSENT, PAYEMS, INDPRO, HOUST, SP500, DCOILWTICO, DTWEXBGS, PSAVERT. Proyecciones FOMC: SEP Mar-2025 (medianas). Uso interno LDWM · No constituye asesoramiento de inversión.
           </div>
 
         </div><!-- /us-body -->
@@ -5697,6 +5897,40 @@ function calcYoY(series) {
   return ((last.value - prev.value) / prev.value) * 100;
 }
 
+// ── Bar chart para curva de rendimientos ──
+function usMkBarChart(cid, data) {
+  const ctx = document.getElementById(cid)?.getContext('2d');
+  if (!ctx) return;
+  const labels = data.map(d => d.lbl);
+  const vals   = data.map(d => d.v);
+  const cols   = vals.map(v => v >= 0 ? '#4f8ef780' : '#f0505080');
+  const bord   = vals.map(v => v >= 0 ? '#4f8ef7' : '#f05050');
+  if (usCharts[cid]) {
+    usCharts[cid].data.labels = labels;
+    usCharts[cid].data.datasets[0].data = vals;
+    usCharts[cid].data.datasets[0].backgroundColor = cols;
+    usCharts[cid].data.datasets[0].borderColor = bord;
+    usCharts[cid].update('none'); return;
+  }
+  usCharts[cid] = new Chart(ctx, {
+    type: 'bar',
+    data: { labels, datasets: [{ data:vals, backgroundColor:cols, borderColor:bord, borderWidth:1.5, borderRadius:3 }] },
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      plugins: { legend:{display:false}, tooltip:{
+        backgroundColor:'#0e1018', borderColor:'#1c2035', borderWidth:1,
+        bodyFont:{family:'DM Mono',size:11},
+        callbacks:{ label: ctx => ` ${uN(ctx.parsed.y,2)}%` }
+      }},
+      scales: {
+        x: { grid:{color:'#1c203528'}, ticks:{color:'#8892a8',font:{family:'DM Mono',size:10}} },
+        y: { grid:{color:'#1c203538'}, ticks:{color:'#545d75',font:{family:'DM Mono',size:9}},
+             title:{display:true,text:'Yield %',color:'#545d75',font:{family:'DM Mono',size:8}} }
+      }
+    }
+  });
+}
+
 // ── Charts ──
 function usMkChart(cid, key, labels, datasets, opts = {}) {
   const ctx = document.getElementById(cid)?.getContext('2d');
@@ -5806,11 +6040,12 @@ function usRenderChart(key, months) {
     ]);
   }
   if (key === 'spr' && US_DATA.spr) {
-    const sprF = filterMonths(US_DATA.spr, months);
+    const sprM = resampleMonthly(US_DATA.spr);
+    const sprF = filterMonths(sprM, months);
     const lbl  = sprF.map(d=>d.date.substring(0,7));
     usMkChart('us-ch-spr','spr',lbl,[
-      {lbl:'10Y-2Y spread', data:sprF.map(d=>d.value), col:colSpr, fill:true, zero:true},
-    ], {zero:true});
+      {lbl:'10Y-2Y (pb)', data:sprF.map(d=>d.value*100), col:colSpr, fill:true, zero:true},
+    ], {zero:true, pb:true});
   }
   if (key === 'm2' && US_DATA.m2) {
     const m2F = filterMonths(US_DATA.m2, months);
@@ -5820,13 +6055,63 @@ function usRenderChart(key, months) {
     ], {nounit:true});
   }
   if (key === 'risk' && US_DATA.hy && US_DATA.sp) {
-    const hyF = filterMonths(US_DATA.hy, months);
-    const spF = filterMonths(US_DATA.sp, months);
+    const hyM = resampleMonthly(US_DATA.hy);
+    const spM = resampleMonthly(US_DATA.sp);
+    const hyF = filterMonths(hyM, months);
+    const spF = filterMonths(spM, months);
     const lbl = hyF.map(d=>d.date.substring(0,7));
     usMkChart('us-ch-risk','risk',lbl,[
-      {lbl:'HY Spread (pb)', data:hyF.map(d=>d.value), col:colHY, fill:false},
-      {lbl:'S&P 500',        data:alignSeries(spF,hyF), col:colSP, fill:false, y2:true},
+      {lbl:'HY Spread (pb)', data:hyF.map(d=>d.value*100), col:colHY, fill:false},
+      {lbl:'S&P 500',        data:alignSeries(spF,hyF),    col:colSP, fill:false, y2:true},
     ], {y2:true, pb:true});
+  }
+  if (key === 'bei' && US_DATA.bei5 && US_DATA.bei && US_DATA.fwd55) {
+    const b5M = resampleMonthly(US_DATA.bei5);
+    const b10M = resampleMonthly(US_DATA.bei);
+    const fwdM = resampleMonthly(US_DATA.fwd55);
+    const b5F = filterMonths(b5M, months);
+    const b10F = filterMonths(b10M, months);
+    const fwdF = filterMonths(fwdM, months);
+    const lbl = b5F.map(d=>d.date.substring(0,7));
+    usMkChart('us-ch-bei','bei',lbl,[
+      {lbl:'BEI 5Y',      data:b5F.map(d=>d.value),      col:'#f09030', fill:false},
+      {lbl:'BEI 10Y',     data:alignSeries(b10F,b5F),    col:colBEI,    fill:false},
+      {lbl:'5Y5Y Fwd',    data:alignSeries(fwdF,b5F),    col:'#c9952a', fill:false, dash:true},
+    ]);
+  }
+  if (key === 'reals' && US_DATA.tips10 && US_DATA.tips5) {
+    const t10M = resampleMonthly(US_DATA.tips10);
+    const t5M  = resampleMonthly(US_DATA.tips5);
+    const t10F = filterMonths(t10M, months);
+    const t5F  = filterMonths(t5M, months);
+    const lbl  = t10F.map(d=>d.date.substring(0,7));
+    usMkChart('us-ch-reals','reals',lbl,[
+      {lbl:'TIPS 10Y real', data:t10F.map(d=>d.value), col:'#4f8ef7', fill:false},
+      {lbl:'TIPS 5Y real',  data:alignSeries(t5F,t10F), col:'#7eb5ff', fill:false, dash:true},
+    ], {zero:true});
+  }
+  if (key === 'spreads' && US_DATA.hy && US_DATA.ig) {
+    const hyM = resampleMonthly(US_DATA.hy);
+    const igM = resampleMonthly(US_DATA.ig);
+    const hyF = filterMonths(hyM, months);
+    const igF = filterMonths(igM, months);
+    const lbl = hyF.map(d=>d.date.substring(0,7));
+    usMkChart('us-ch-spreads','spreads',lbl,[
+      {lbl:'HY OAS (pb)', data:hyF.map(d=>d.value*100), col:'#f05050', fill:false},
+      {lbl:'IG OAS (pb)', data:alignSeries(igF,hyF).map(v=>v!=null?v*100:null), col:'#f0b429', fill:false},
+    ], {pb:true});
+  }
+  if (key === 'oil' && US_DATA.wti) {
+    const wtiM = resampleMonthly(US_DATA.wti);
+    const wtiF = filterMonths(wtiM, months);
+    const lbl  = wtiF.map(d=>d.date.substring(0,7));
+    const datasets = [{lbl:'WTI (USD/bbl)', data:wtiF.map(d=>d.value), col:'#c9952a', fill:true}];
+    if (US_DATA.dxy) {
+      const dxyM = resampleMonthly(US_DATA.dxy);
+      const dxyF = filterMonths(dxyM, months);
+      datasets.push({lbl:'DXY Real', data:alignSeries(dxyF,wtiF), col:'#4f8ef7', fill:false, y2:true});
+    }
+    usMkChart('us-ch-oil','oil',lbl, datasets, {y2: !!US_DATA.dxy, nounit:true});
   }
 }
 
@@ -5854,12 +6139,21 @@ function alignSeries(seriesB, seriesA) {
   });
 }
 
+// Resamplear serie diaria a mensual (último valor del mes)
+function resampleMonthly(series) {
+  if (!series?.length) return [];
+  const map = {};
+  series.forEach(d => { map[d.date.substring(0,7)] = d.value; });
+  return Object.entries(map).sort().map(([date, value]) => ({ date, value }));
+}
+
 // ── Semáforo de ciclo ──
 function usSemaforo() {
   const items = [
     { l:'Curva 10Y−2Y', f:() => {
         const v = US_DATA.spr ? fredLast(US_DATA.spr)?.value : null;
-        return {ok:v>50,w:v>-20,v:v!=null?uPb(v*100,0):'—'};
+        const pb = v != null ? v * 100 : null;
+        return {ok:pb!=null&&pb>50, w:pb!=null&&pb>-20, v:pb!=null?uPb(pb,0):'—'};
       }
     },
     { l:'Desempleo U-3', f:() => {
@@ -5882,7 +6176,8 @@ function usSemaforo() {
     },
     { l:'HY Spread', f:() => {
         const v = fredLast(US_DATA.hy)?.value;
-        return {ok:v<350,w:v<550,v:v!=null?uPb(v):'—'};
+        const pb = v != null ? v * 100 : null;
+        return {ok:pb!=null&&pb<350, w:pb!=null&&pb<550, v:pb!=null?uPb(pb,0):'—'};
       }
     },
     { l:'Confianza consumidor', f:() => {
@@ -5938,11 +6233,13 @@ function usAnalysis() {
     uSet('us-real-rate2', (rr2>=0?'+':'')+uN(rr2,2)+'%', rr2>0?'var(--green)':'var(--red)');
   }
   if (hy!=null) {
-    const nivel = hy < 300 ? 'Compresión / riesgo bajo' : hy < 500 ? 'Normal' : hy < 800 ? 'Estrés moderado' : 'Estrés severo';
-    uSet('us-hy-level', uPb(hy)+' · '+nivel, hy<300?'var(--green)':hy<500?'var(--txt)':hy<800?'var(--orange)':'var(--red)');
+    const hyPb = hy * 100;
+    const nivel = hyPb < 300 ? 'Compresión / riesgo bajo' : hyPb < 500 ? 'Normal' : hyPb < 800 ? 'Estrés moderado' : 'Estrés severo';
+    uSet('us-hy-level', uPb(hyPb,0)+' · '+nivel, hyPb<300?'var(--green)':hyPb<500?'var(--txt)':hyPb<800?'var(--orange)':'var(--red)');
   }
   if (spr!=null) {
-    uSet('us-curve', uPb(spr*100,0)+(spr<0?' ⚠ Invertida':spr<0.5?' Plana':' Normal'), spr<0?'var(--red)':spr<0.5?'var(--orange)':'var(--green)');
+    const sprPb = spr * 100;
+    uSet('us-curve', uPb(sprPb,0)+(sprPb<0?' ⚠ Invertida':sprPb<50?' Plana':' Normal'), sprPb<0?'var(--red)':sprPb<50?'var(--orange)':'var(--green)');
   }
   if (bei!=null && pce!=null) {
     const prima = bei - pce;
@@ -5975,8 +6272,9 @@ function usAnalysis() {
     else lines.push('🟢 Curva normal → entorno favorable para carry en EM incluido Argentina');
   }
   if (hy!=null) {
-    if (hy < 350) lines.push('🟢 Spreads HY comprimidos → apetito por riesgo, beneficia bonos AR y EM');
-    else if (hy < 600) lines.push('🟡 Spreads HY normales → selectividad en crédito EM');
+    const hyPb2 = hy * 100;
+    if (hyPb2 < 350) lines.push('🟢 Spreads HY comprimidos → apetito por riesgo, beneficia bonos AR y EM');
+    else if (hyPb2 < 600) lines.push('🟡 Spreads HY normales → selectividad en crédito EM');
     else lines.push('🔴 Spreads HY elevados → risk-off global, presión sobre Argentina');
   }
   if (cpi!=null) {
@@ -5994,8 +6292,10 @@ async function usLoad_all() {
 
   // Reset loadings
   ['us-gdp','us-gdpg','us-unrate','us-u6','us-payems','us-indpro',
-   'us-cpi','us-cpic','us-pce','us-bei','us-ff','us-t2','us-t10',
-   'us-spr','us-mort','us-hy','us-m2','us-sent','us-houst','us-sp'
+   'us-cpi','us-cpic','us-pce','us-bei-top','us-ff','us-t2','us-t10',
+   'us-spr','us-mort','us-hy','us-m2','us-sent','us-houst','us-sp',
+   'us-t3m','us-t30','us-fedtarget','us-bei5','us-fwd55','us-tips10','us-tips5',
+   'us-wti','us-dxy','us-ig','us-psav'
   ].forEach(uLoad);
 
   const errBanner = document.getElementById('us-err-banner');
@@ -6005,9 +6305,11 @@ async function usLoad_all() {
     const startLong  = '2010-01-01';
     const startShort = '2020-01-01';
 
-    // Fetch paralelo
+    // Fetch paralelo — series base + nuevas
     const [gdp, unrate, u6, payems, indpro, cpiAll, cpiCore,
-           pce, ff, t2, t10, bei, spr, mort, hy, m2, sent, houst, sp] = await Promise.all([
+           pce, ff, t2, t10, bei, spr, mort, hy, m2, sent, houst, sp,
+           t3m, t30, tips10, tips5, bei5, fwd55, fedU, fedL, wti, dxy, ig, psav
+    ] = await Promise.all([
       fetchFred('GDPC1',        startLong),
       fetchFred('UNRATE',       startLong),
       fetchFred('U6RATE',       startLong),
@@ -6027,11 +6329,25 @@ async function usLoad_all() {
       fetchFred('UMCSENT',      startShort),
       fetchFred('HOUST',        startShort),
       fetchFred('SP500',        startLong),
+      // Nuevas series
+      fetchFred('DGS3MO',       startLong),   // T-bill 3M
+      fetchFred('DGS30',        startLong),   // Treasury 30Y
+      fetchFred('DFII10',       startShort),  // TIPS real yield 10Y
+      fetchFred('DFII5',        startShort),  // TIPS real yield 5Y
+      fetchFred('T5YIE',        startShort),  // BEI 5Y (inflación implícita)
+      fetchFred('T5YIFR',       startShort),  // 5Y5Y forward inflation
+      fetchFred('DFEDTARU',     startShort),  // FF target upper bound
+      fetchFred('DFEDTARL',     startShort),  // FF target lower bound
+      fetchFred('DCOILWTICO',   startLong),   // WTI crudo
+      fetchFred('DTWEXBGS',     startLong),   // Dólar real broad
+      fetchFred('BAMLC0A0CM',   startLong),   // IG spread OAS
+      fetchFred('PSAVERT',      startLong),   // Tasa de ahorro personal
     ]);
 
     // Guardar en US_DATA
     Object.assign(US_DATA, { gdp, unrate, u6, payems, indpro,
-      cpi:cpiAll, cpic:cpiCore, pce, ff, t2, t10, bei, spr, mort, hy, m2, sent, houst, sp });
+      cpi:cpiAll, cpic:cpiCore, pce, ff, t2, t10, bei, spr, mort, hy, m2, sent, houst, sp,
+      t3m, t30, tips10, tips5, bei5, fwd55, fedU, fedL, wti, dxy, ig, psav });
 
     // ── KPIs
     const gdpL  = fredLast(gdp);
@@ -6062,7 +6378,10 @@ async function usLoad_all() {
     const pceYoY = calcYoY(pce);
     if (pceYoY!=null) { uSet('us-pce', uP(pceYoY), pceYoY>3?'var(--red)':pceYoY>2?'var(--orange)':'var(--green)'); document.getElementById('us-pce-d').textContent = fredLast(pce)?.date||''; }
     const beiL = fredLast(bei);
-    if (beiL) { uSet('us-bei', uP(beiL.value)); document.getElementById('us-bei-d').textContent = beiL.date; }
+    if (beiL) {
+      uSet('us-bei-top', uP(beiL.value));
+      const bTopD = document.getElementById('us-bei-top-d'); if(bTopD) bTopD.textContent = beiL.date;
+    }
 
     const ffL = fredLast(ff);
     if (ffL) { uSet('us-ff', uP(ffL.value)); document.getElementById('us-ff-d').textContent = ffL.date; }
@@ -6073,13 +6392,17 @@ async function usLoad_all() {
     const sprL = fredLast(spr);
     if (sprL) {
       const sprPb = sprL.value * 100;
-      uSet('us-spr', uPb(sprPb,0), sprL.value < 0?'var(--red)':sprL.value<0.5?'var(--orange)':'var(--green)');
+      uSet('us-spr', uPb(sprPb,0), sprPb < 0?'var(--red)':sprPb<50?'var(--orange)':'var(--green)');
       document.getElementById('us-spr-d').textContent = sprL.date;
     }
     const mortL = fredLast(mort);
     if (mortL) { uSet('us-mort', uP(mortL.value)); document.getElementById('us-mort-d').textContent = mortL.date; }
     const hyL = fredLast(hy);
-    if (hyL) { uSet('us-hy', uPb(hyL.value), hyL.value>600?'var(--red)':hyL.value>400?'var(--orange)':'var(--green)'); document.getElementById('us-hy-d').textContent = hyL.date; }
+    if (hyL) {
+      const hyPb = hyL.value * 100;
+      uSet('us-hy', uPb(hyPb,0), hyPb>600?'var(--red)':hyPb>400?'var(--orange)':'var(--green)');
+      document.getElementById('us-hy-d').textContent = hyL.date;
+    }
 
     const m2L = fredLast(m2);
     if (m2L) { uSet('us-m2', '$'+uN(m2L.value/1000,1)+'T'); document.getElementById('us-m2-d').textContent = m2L.date; }
@@ -6090,8 +6413,80 @@ async function usLoad_all() {
     const spL = fredLast(sp);
     if (spL) { uSet('us-sp', uN(spL.value,0)); document.getElementById('us-sp-d').textContent = spL.date; }
 
+    // ── KPIs nuevos: curva completa
+    const t3mL  = fredLast(t3m);
+    const t30L  = fredLast(t30);
+    const fedUL = fredLast(fedU);
+    const fedLL = fredLast(fedL);
+    if (t3mL)  { uSet('us-t3m', uP(t3mL.value)); document.getElementById('us-t3m-d').textContent = t3mL.date; }
+    if (t30L)  { uSet('us-t30', uP(t30L.value)); document.getElementById('us-t30-d').textContent = t30L.date; }
+    if (fedUL && fedLL) {
+      uSet('us-fedtarget', fedLL.value.toFixed(2)+'–'+fedUL.value.toFixed(2)+'%');
+      document.getElementById('us-fedtarget-d').textContent = fedUL.date;
+    }
+    // Real short rate: 3M T-bill - CPI
+    if (t3mL && cpiYoY!=null) {
+      const rsr = t3mL.value - cpiYoY;
+      uSet('us-rsr', (rsr>=0?'+':'')+uN(rsr,2)+'%', rsr>0?'var(--green)':'var(--red)');
+    }
+
+    // ── KPIs nuevos: inflación implícita y TIPS
+    const bei5L   = fredLast(bei5);
+    const fwd55L  = fredLast(fwd55);
+    const tips10L = fredLast(tips10);
+    const tips5L  = fredLast(tips5);
+    if (bei5L)   { uSet('us-bei5', uP(bei5L.value)); document.getElementById('us-bei5-d').textContent = bei5L.date; }
+    if (fwd55L)  { uSet('us-fwd55', uP(fwd55L.value)); document.getElementById('us-fwd55-d').textContent = fwd55L.date; }
+    if (tips10L) { uSet('us-tips10', (tips10L.value>=0?'+':'')+uN(tips10L.value,2)+'%', tips10L.value>0?'var(--green)':'var(--red)'); document.getElementById('us-tips10-d').textContent = tips10L.date; }
+    if (tips5L)  { uSet('us-tips5',  (tips5L.value>=0?'+':'')+uN(tips5L.value,2)+'%',  tips5L.value>0?'var(--green)':'var(--red)');  document.getElementById('us-tips5-d').textContent  = tips5L.date; }
+
+    // Credibilidad Fed: 5Y5Y vs 2% target
+    if (fwd55L) {
+      const devFed = fwd55L.value - 2.0;
+      uSet('us-fedbias', (devFed>=0?'+':'')+uN(devFed,2)+'pp vs 2%', Math.abs(devFed)<0.3?'var(--green)':Math.abs(devFed)<0.6?'var(--orange)':'var(--red)');
+    }
+
+    // ── KPIs nuevos: commodities y IG
+    const wtiL  = fredLast(wti);
+    const dxyL  = fredLast(dxy);
+    const igL   = fredLast(ig);
+    const psavL = fredLast(psav);
+    if (wtiL)  { uSet('us-wti',  'USD '+uN(wtiL.value,1)); document.getElementById('us-wti-d').textContent  = wtiL.date; }
+    if (dxyL)  { uSet('us-dxy',  uN(dxyL.value,1));         document.getElementById('us-dxy-d').textContent  = dxyL.date; }
+    if (igL)   {
+      const igPb = igL.value * 100;
+      uSet('us-ig', uPb(igPb,0), igPb>200?'var(--red)':igPb>130?'var(--orange)':'var(--green)');
+      document.getElementById('us-ig-d').textContent = igL.date;
+      // Spread HY-IG
+      const hyL2 = fredLast(hy);
+      if (hyL2) {
+        const diff = (hyL2.value - igL.value)*100;
+        uSet('us-hyig-spr', uPb(diff,0), diff>400?'var(--red)':diff>300?'var(--orange)':'var(--green)');
+      }
+    }
+    if (psavL) { uSet('us-psav', uN(psavL.value,1)+'%');    document.getElementById('us-psav-d').textContent = psavL.date; }
+
+    // Yield curve snapshot (bar canvas)
+    const curveData = [
+      { lbl:'3M', v: t3mL?.value ?? null },
+      { lbl:'2Y', v: fredLast(t2)?.value ?? null },
+      { lbl:'10Y', v: fredLast(t10)?.value ?? null },
+      { lbl:'30Y', v: t30L?.value ?? null },
+    ].filter(d => d.v != null);
+    usMkBarChart('us-ch-curve', curveData);
+
+    // FOMC SEP vs actual
+    if (cpiYoY!=null) uSet('us-sep-cpi-act', uP(cpiYoY));
+    if (pceYoY!=null) uSet('us-sep-pce-act', uP(pceYoY));
+    if (urL) uSet('us-sep-unem-act', uP(urL.value));
+    if (gdpL && gdpP) {
+      const gAnn = ((gdpL.value-gdpP.value)/gdpP.value)*4*100;
+      uSet('us-sep-gdp-act', (gAnn>=0?'+':'')+uN(gAnn,1)+'%');
+    }
+    if (fedUL) uSet('us-sep-ff-act', uP(fedUL.value));
+
     // ── Gráficos (por defecto 24 meses)
-    ['inf','rates','unemp','spr','m2','risk'].forEach(k => usRenderChart(k, 24));
+    ['inf','rates','unemp','spr','m2','risk','bei','reals','spreads','oil'].forEach(k => usRenderChart(k, 24));
 
     // ── Semáforo y análisis
     usSemaforo();
