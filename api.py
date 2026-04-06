@@ -861,6 +861,269 @@ def api_fred():
         return jsonify({'ok': False, 'msg': str(e)}), 500
 
 
+# ── /api/insider ───────────────────────────────────────────────────────────────
+# Fuente: SEC EDGAR Form 4 filings (público, sin auth)
+# GET /api/insider?days=30
+# Respuesta: {ok: true, data: [{date, ticker, issuer_name, insider_name, title,
+#             relationship, type, shares, price, value, sector}]}
+# ──────────────────────────────────────────────────────────────────────────────
+
+_INSIDER_CACHE   = {}   # {'data': [...], 'ts': float, 'days': int}
+_CIK_INFO_CACHE  = {}   # cik_str -> {'sector': str}
+
+_SEC_HEADERS = {'User-Agent': 'LDWM Research admin@ldwm.com', 'Accept': 'application/json'}
+_SEC_HEADERS_XML = {'User-Agent': 'LDWM Research admin@ldwm.com'}
+
+_SIC_SECTORS = {
+    range(7300, 7400): 'Technology',
+    range(2800, 2900): 'Healthcare',
+    range(3800, 3900): 'Healthcare',
+    range(8000, 8100): 'Healthcare',
+    range(6000, 6100): 'Finance',
+    range(6100, 6200): 'Finance',
+    range(6200, 6300): 'Finance',
+    range(6300, 6400): 'Finance',
+    range(1300, 1400): 'Energy',
+    range(2900, 3000): 'Energy',
+    range(5200, 6000): 'Consumer',
+    range(2000, 2200): 'Consumer',
+    range(3500, 3600): 'Industrial',
+    range(3400, 3500): 'Industrial',
+    range(3700, 3800): 'Industrial',
+    range(4400, 4600): 'Industrial',
+    range(6500, 6600): 'Real Estate',
+    range(6700, 6800): 'Real Estate',
+    range(1000, 1100): 'Materials',
+    range(3300, 3400): 'Materials',
+    range(4900, 5000): 'Utilities',
+    range(4800, 4900): 'Communications',
+    range(7800, 7900): 'Communications',
+}
+
+def _sic_to_sector(sic_str):
+    """Convierte código SIC a sector."""
+    try:
+        sic = int(str(sic_str).strip())
+        for r, sector in _SIC_SECTORS.items():
+            if sic in r:
+                return sector
+    except Exception:
+        pass
+    return 'Other'
+
+def _get_cik_sector(cik_str):
+    """Obtiene el sector de un CIK desde SEC submissions JSON. Cachea."""
+    import time
+    cik_key = cik_str.lstrip('0') or '0'
+    cached = _CIK_INFO_CACHE.get(cik_key)
+    if cached:
+        return cached.get('sector', 'Other')
+    try:
+        cik_10 = cik_str.zfill(10)
+        url = f'https://data.sec.gov/submissions/CIK{cik_10}.json'
+        r = req.get(url, headers=_SEC_HEADERS, timeout=10)
+        if r.status_code == 200:
+            d = r.json()
+            sic = d.get('sic') or d.get('sicDescription', '')
+            sector = _sic_to_sector(sic)
+            _CIK_INFO_CACHE[cik_key] = {'sector': sector}
+            return sector
+    except Exception:
+        pass
+    _CIK_INFO_CACHE[cik_key] = {'sector': 'Other'}
+    return 'Other'
+
+def _parse_form4_xml(xml_bytes):
+    """Parsea XML de Form 4 y devuelve lista de trades."""
+    import xml.etree.ElementTree as ET
+    # Evitar problemas de namespace
+    xml_clean = xml_bytes.replace(b' xmlns=', b' xmlnsIgnore=')
+    try:
+        root = ET.fromstring(xml_clean)
+    except Exception:
+        return []
+
+    def txt(el, tag):
+        """Extrae texto de un sub-elemento."""
+        node = el.find(tag)
+        if node is not None and node.text:
+            return node.text.strip()
+        return ''
+
+    def safe_float(s):
+        try:
+            return float(str(s).replace(',', '').strip())
+        except Exception:
+            return None
+
+    issuer_ticker = txt(root, 'issuer/issuerTradingSymbol')
+    issuer_name   = txt(root, 'issuer/issuerName')
+    issuer_cik    = txt(root, 'issuer/issuerCik')
+
+    owner_name  = txt(root, 'reportingOwner/reportingOwnerId/rptOwnerName')
+    officer_title = txt(root, 'reportingOwner/reportingOwnerRelationship/officerTitle')
+    is_director = txt(root, 'reportingOwner/reportingOwnerRelationship/isDirector') == '1'
+    is_officer  = txt(root, 'reportingOwner/reportingOwnerRelationship/isOfficer') == '1'
+    is_10pct    = txt(root, 'reportingOwner/reportingOwnerRelationship/isTenPercentOwner') == '1'
+
+    if is_officer:
+        relationship = 'Officer'
+    elif is_director:
+        relationship = 'Director'
+    elif is_10pct:
+        relationship = '10%+ Owner'
+    else:
+        relationship = 'Other'
+
+    trades = []
+    nd_table = root.find('nonDerivativeTable')
+    if nd_table is None:
+        return trades
+
+    for txn in nd_table.findall('nonDerivativeTransaction'):
+        code = txt(txn, 'transactionAmounts/transactionCode')
+        if code not in ('P', 'S'):
+            continue
+        date_str = txt(txn, 'transactionDate/value')
+        shares_v = safe_float(txt(txn, 'transactionAmounts/transactionShares/value'))
+        price_v  = safe_float(txt(txn, 'transactionAmounts/transactionPricePerShare/value'))
+
+        if shares_v is None or price_v is None:
+            continue
+
+        value = round(shares_v * price_v, 2)
+        trades.append({
+            'date':         date_str,
+            'ticker':       issuer_ticker,
+            'issuer_name':  issuer_name,
+            'issuer_cik':   issuer_cik,
+            'insider_name': owner_name,
+            'title':        officer_title,
+            'relationship': relationship,
+            'type':         'B' if code == 'P' else 'S',
+            'shares':       shares_v,
+            'price':        price_v,
+            'value':        value,
+        })
+    return trades
+
+def _fetch_insider_data(days):
+    """Descarga y procesa Form 4 filings de SEC EDGAR."""
+    import time
+    from datetime import datetime, timedelta
+
+    end_dt   = datetime.utcnow()
+    start_dt = end_dt - timedelta(days=days)
+    start_s  = start_dt.strftime('%Y-%m-%d')
+    end_s    = end_dt.strftime('%Y-%m-%d')
+
+    all_trades = []
+    max_filings = 150
+    page_size   = 20
+    fetched     = 0
+
+    for offset in range(0, max_filings, page_size):
+        url = (
+            f'https://efts.sec.gov/LATEST/search-index?q=&forms=4'
+            f'&dateRange=custom&startdt={start_s}&enddt={end_s}'
+            f'&from={offset}&size={page_size}'
+        )
+        try:
+            r = req.get(url, headers=_SEC_HEADERS, timeout=15)
+            if r.status_code != 200:
+                break
+            d = r.json()
+            hits = d.get('hits', {}).get('hits', [])
+            if not hits:
+                break
+        except Exception:
+            break
+
+        for hit in hits:
+            try:
+                _id = hit.get('_id', '')
+                # _id formato: 0001234567-25-000001
+                parts = _id.split('-')
+                if len(parts) < 3:
+                    continue
+                cik    = parts[0]        # primeros 10 dígitos (con ceros)
+                nodash = _id.replace('-', '')
+                cik_int = int(cik)
+
+                index_url = f'https://www.sec.gov/Archives/edgar/data/{cik_int}/{nodash}/{_id}-index.json'
+                time.sleep(0.12)
+                ir = req.get(index_url, headers=_SEC_HEADERS, timeout=12)
+                if ir.status_code != 200:
+                    continue
+                idx = ir.json()
+
+                # Buscar documento XML de tipo "4"
+                xml_doc = None
+                for doc in idx.get('documents', []):
+                    if doc.get('type') == '4' and doc.get('document', '').lower().endswith('.xml'):
+                        xml_doc = doc.get('document')
+                        break
+                if not xml_doc:
+                    continue
+
+                xml_url = f'https://www.sec.gov/Archives/edgar/data/{cik_int}/{nodash}/{xml_doc}'
+                time.sleep(0.12)
+                xr = req.get(xml_url, headers=_SEC_HEADERS_XML, timeout=12)
+                if xr.status_code != 200:
+                    continue
+
+                trades = _parse_form4_xml(xr.content)
+                if not trades:
+                    continue
+
+                # Obtener sector del issuer
+                issuer_cik = trades[0].get('issuer_cik') or cik
+                issuer_cik_str = str(issuer_cik).zfill(10)
+                time.sleep(0.12)
+                sector = _get_cik_sector(issuer_cik_str)
+
+                for t in trades:
+                    t['sector'] = sector
+                    # Limpiar campo interno
+                    t.pop('issuer_cik', None)
+                    all_trades.append(t)
+
+                fetched += 1
+            except Exception:
+                continue
+
+        if len(hits) < page_size:
+            break
+
+    return all_trades
+
+
+@app.route('/api/insider', methods=['GET'])
+def api_insider():
+    import time
+    try:
+        days = int(request.args.get('days', 30))
+        if days < 1 or days > 365:
+            days = 30
+    except Exception:
+        days = 30
+
+    now = time.time()
+    cached = _INSIDER_CACHE
+    if cached.get('data') is not None and cached.get('days') == days and now - cached.get('ts', 0) < 4 * 3600:
+        return jsonify({'ok': True, 'data': cached['data'], 'cached': True})
+
+    try:
+        data = _fetch_insider_data(days)
+        _INSIDER_CACHE.clear()
+        _INSIDER_CACHE['data'] = data
+        _INSIDER_CACHE['ts']   = time.time()
+        _INSIDER_CACHE['days'] = days
+        return jsonify({'ok': True, 'data': data, 'cached': False})
+    except Exception as e:
+        return jsonify({'ok': False, 'msg': str(e)}), 500
+
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
