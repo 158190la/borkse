@@ -926,6 +926,12 @@ input:checked + .db-tog-slider:before { transform:translateX(17px); background:v
           <p>Dashboard macro de Estados Unidos vía API FRED: PBI, inflación, desempleo, Fed Funds, curva de rendimientos, M2, crédito, housing y ciclo económico. Requiere API key gratuita de FRED.</p>
           <span class="card-arrow">↗</span>
         </div>
+        <div class="home-card" onclick="showPage('insider')">
+          <div class="card-icon">⬡</div>
+          <h3>Insider Trading EE.UU.</h3>
+          <p>Monitoreo de transacciones de insiders (Form 4 de SEC EDGAR). Compras y ventas de directores, officers y accionistas mayoritarios en el mercado estadounidense.</p>
+          <span class="card-arrow">↗</span>
+        </div>
         <div class="home-card" onclick="showPage('scraper')">
           <div class="card-icon">↻</div>
           <h3>Actualizar Datos de Bonos</h3>
@@ -3095,6 +3101,174 @@ if __name__ == '__main__':
     </div><!-- /us-wrap -->
     </div><!-- /page-usmonitor -->
 
+    <!-- ══════════════════════════════════════════════════════
+         INSIDER TRADING EE.UU. · SEC EDGAR Form 4
+    ══════════════════════════════════════════════════════ -->
+    <div id="page-insider" class="page">
+    <style>
+    /* ── INSIDER TRADING ── */
+    .ins-wrap { padding: 0; }
+    .ins-topbar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 28px; border-bottom: 1px solid var(--bdr);
+      background: var(--surf); flex-wrap: wrap; gap: 10px;
+    }
+    .ins-topbar-left h1 { font-family: var(--serif); font-size: 20px; font-style: italic; }
+    .ins-topbar-left small { font-family: var(--mono); font-size: 9px; color: var(--txt3); }
+    .ins-topbar-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .ins-day-btns { display: flex; gap: 4px; }
+    .ins-day-btn {
+      font-family: var(--mono); font-size: 11px; font-weight: 500;
+      padding: 5px 12px; border-radius: var(--radius);
+      border: 1px solid var(--bdr2); background: transparent;
+      color: var(--txt2); cursor: pointer; transition: all .15s;
+    }
+    .ins-day-btn:hover { border-color: var(--acc); color: var(--acc); }
+    .ins-day-btn.active { background: rgba(79,142,247,.15); border-color: var(--acc); color: var(--acc); }
+    .ins-load-btn {
+      font-family: var(--mono); font-size: 11px; font-weight: 500;
+      padding: 5px 14px; border-radius: var(--radius);
+      border: 1px solid rgba(79,142,247,.3); background: rgba(79,142,247,.1);
+      color: var(--acc); cursor: pointer; transition: all .2s;
+    }
+    .ins-load-btn:hover { background: rgba(79,142,247,.2); }
+    .ins-load-btn.loading { opacity: .5; pointer-events: none; }
+    .ins-spinner { display: none; font-size: 13px; color: var(--txt3); font-family: var(--mono); animation: spin .8s linear infinite; }
+    .ins-spinner.show { display: inline; }
+
+    .ins-err {
+      margin: 16px 28px; padding: 12px 16px;
+      background: rgba(240,80,80,.08); border: 1px solid rgba(240,80,80,.2);
+      border-radius: var(--radius); color: var(--red);
+      font-family: var(--mono); font-size: 12px;
+      display: none;
+    }
+    .ins-err.show { display: block; }
+
+    .ins-body { padding: 20px 28px; display: flex; flex-direction: column; gap: 24px; }
+
+    .ins-sec {
+      background: var(--surf); border: 1px solid var(--bdr);
+      border-radius: var(--radius); overflow: hidden;
+    }
+    .ins-sec-hdr {
+      padding: 10px 16px; border-bottom: 1px solid var(--bdr);
+      font-family: var(--mono); font-size: 10px; font-weight: 500;
+      color: var(--txt3); text-transform: uppercase; letter-spacing: .1em;
+      background: var(--surf2);
+    }
+    .ins-chart-wrap { padding: 16px; height: 220px; position: relative; }
+    .ins-chart-wrap canvas { width: 100% !important; }
+
+    .ins-table-wrap { overflow-x: auto; }
+    .ins-table {
+      width: 100%; border-collapse: collapse;
+      font-family: var(--mono); font-size: 12px;
+    }
+    .ins-table th {
+      padding: 8px 12px; text-align: left;
+      background: var(--surf2); border-bottom: 1px solid var(--bdr);
+      color: var(--txt3); font-size: 9px; text-transform: uppercase; letter-spacing: .08em;
+      white-space: nowrap;
+    }
+    .ins-table td {
+      padding: 7px 12px; border-bottom: 1px solid var(--bdr);
+      color: var(--txt); white-space: nowrap;
+    }
+    .ins-table tr:last-child td { border-bottom: none; }
+    .ins-table tr:hover td { background: var(--surf2); }
+    .ins-badge-buy  { color: var(--green); font-weight: 600; }
+    .ins-badge-sell { color: var(--red); font-weight: 600; }
+    .ins-ticker { color: var(--acc); font-weight: 600; }
+    .ins-signal { font-size: 11px; white-space: nowrap; }
+    .ins-empty { padding: 32px; text-align: center; color: var(--txt3); font-family: var(--mono); font-size: 12px; }
+    </style>
+
+    <div class="ins-wrap">
+      <!-- Topbar -->
+      <div class="ins-topbar">
+        <div class="ins-topbar-left">
+          <h1>Insider Trading EE.UU.</h1>
+          <small>Fuente: SEC EDGAR Form 4 — Oficial, público</small>
+        </div>
+        <div class="ins-topbar-right">
+          <div class="ins-day-btns">
+            <button class="ins-day-btn" onclick="insSetDays(7, this)">7d</button>
+            <button class="ins-day-btn active" onclick="insSetDays(30, this)">30d</button>
+            <button class="ins-day-btn" onclick="insSetDays(90, this)">90d</button>
+          </div>
+          <button class="ins-load-btn" id="ins-load-btn" onclick="window.insiderLoad()">↻ Actualizar</button>
+          <span class="ins-spinner" id="ins-spin">⟳</span>
+        </div>
+      </div>
+
+      <!-- Error banner -->
+      <div class="ins-err" id="ins-err"></div>
+
+      <!-- Body -->
+      <div class="ins-body">
+
+        <!-- Chart volumen -->
+        <div class="ins-sec">
+          <div class="ins-sec-hdr">Volumen Operado por Día (USD)</div>
+          <div class="ins-chart-wrap">
+            <canvas id="ins-ch-vol"></canvas>
+          </div>
+        </div>
+
+        <!-- Resumen por activo -->
+        <div class="ins-sec">
+          <div class="ins-sec-hdr">Resumen por Activo</div>
+          <div class="ins-table-wrap">
+            <table class="ins-table">
+              <thead>
+                <tr>
+                  <th>Ticker</th>
+                  <th>Empresa</th>
+                  <th>Sector</th>
+                  <th># Compras</th>
+                  <th>Vol Compras</th>
+                  <th># Ventas</th>
+                  <th>Vol Ventas</th>
+                  <th>Neto USD</th>
+                  <th>Último Trade</th>
+                  <th>Top Insider</th>
+                  <th>Señal</th>
+                </tr>
+              </thead>
+              <tbody id="ins-tbl-asset"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Trades recientes -->
+        <div class="ins-sec">
+          <div class="ins-sec-hdr">Trades Recientes (últimos 100)</div>
+          <div class="ins-table-wrap">
+            <table class="ins-table">
+              <thead>
+                <tr>
+                  <th>Fecha</th>
+                  <th>Ticker</th>
+                  <th>Empresa</th>
+                  <th>Insider</th>
+                  <th>Cargo</th>
+                  <th>Tipo</th>
+                  <th>Acciones</th>
+                  <th>Precio</th>
+                  <th>Valor USD</th>
+                  <th>Sector</th>
+                </tr>
+              </thead>
+              <tbody id="ins-tbl-detail"></tbody>
+            </table>
+          </div>
+        </div>
+
+      </div><!-- /ins-body -->
+    </div><!-- /ins-wrap -->
+    </div><!-- /page-insider -->
+
   </div><!-- /content -->
 </div><!-- /app -->
 
@@ -3189,6 +3363,10 @@ function showPage(id) {
   if (id === 'usmonitor' && !window._usInit) {
     window._usInit = true;
     setTimeout(usInit, 200);
+  }
+  if (id === 'insider' && !window._insiderLoaded) {
+    window._insiderLoaded = true;
+    setTimeout(insiderLoad, 200);
   }
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
@@ -6523,6 +6701,251 @@ window.usInit = function() {
 };
 
 })(); // fin IIFE usmonitor
+
+// ══════════════════════════════════════════════════════════
+// INSIDER TRADING EE.UU.
+// ══════════════════════════════════════════════════════════
+(function() {
+  let INS_DATA = [];
+  let INS_DAYS = 30;
+  let insChart = null;
+
+  window.insSetDays = function(d, btn) {
+    document.querySelectorAll('.ins-day-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    INS_DAYS = d;
+    window.insiderLoad();
+  };
+
+  window.insiderLoad = async function() {
+    const btn  = document.getElementById('ins-load-btn');
+    const spin = document.getElementById('ins-spin');
+    const err  = document.getElementById('ins-err');
+    if (btn)  btn.classList.add('loading');
+    if (spin) spin.classList.add('show');
+    err.classList.remove('show');
+
+    try {
+      const resp = await API.get('/api/insider?days=' + INS_DAYS);
+      if (!resp.ok) throw new Error(resp.msg || 'Error al obtener datos');
+      INS_DATA = (resp.data || []).slice().sort((a, b) => {
+        if (b.date > a.date) return 1;
+        if (b.date < a.date) return -1;
+        return (b.value || 0) - (a.value || 0);
+      });
+      insRenderChart(INS_DATA);
+      insRenderTable(INS_DATA);
+      insRenderDetail(INS_DATA);
+    } catch (e) {
+      err.textContent = '⚠ ' + (e.message || 'Error desconocido');
+      err.classList.add('show');
+    } finally {
+      if (btn)  btn.classList.remove('loading');
+      if (spin) spin.classList.remove('show');
+    }
+  };
+
+  function fmtVal(v) {
+    if (v == null) return '—';
+    const abs = Math.abs(v);
+    if (abs >= 1e9) return '$' + (v / 1e9).toFixed(2) + 'B';
+    if (abs >= 1e6) return '$' + (v / 1e6).toFixed(2) + 'M';
+    if (abs >= 1e3) return '$' + (v / 1e3).toFixed(1) + 'K';
+    return '$' + v.toFixed(0);
+  }
+
+  function fmtNum(n) {
+    if (n == null) return '—';
+    const abs = Math.abs(n);
+    if (abs >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+    if (abs >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+    return n.toFixed(0);
+  }
+
+  function insRenderChart(data) {
+    // Agrupar por fecha
+    const byDate = {};
+    data.forEach(t => {
+      const d = (t.date || '').slice(0, 10);
+      if (!d) return;
+      if (!byDate[d]) byDate[d] = { buyVol: 0, sellVol: 0 };
+      if (t.type === 'B') byDate[d].buyVol  += (t.value || 0);
+      else                byDate[d].sellVol += (t.value || 0);
+    });
+
+    const dates = Object.keys(byDate).sort();
+    const buyVols  = dates.map(d => byDate[d].buyVol);
+    const sellVols = dates.map(d => byDate[d].sellVol);
+
+    // Determinar escala máxima para tick formatter
+    const maxVal = Math.max(...buyVols, ...sellVols, 1);
+    let tickDiv = 1, tickSuffix = '';
+    if (maxVal >= 1e9)      { tickDiv = 1e9; tickSuffix = 'B'; }
+    else if (maxVal >= 1e6) { tickDiv = 1e6; tickSuffix = 'M'; }
+    else if (maxVal >= 1e3) { tickDiv = 1e3; tickSuffix = 'K'; }
+
+    const ctx = document.getElementById('ins-ch-vol');
+    if (!ctx) return;
+
+    if (insChart) { insChart.destroy(); insChart = null; }
+
+    insChart = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: dates,
+        datasets: [
+          {
+            label: 'Compras',
+            data: buyVols,
+            backgroundColor: 'rgba(52,200,122,.5)',
+            borderColor: 'rgba(52,200,122,.8)',
+            borderWidth: 1,
+          },
+          {
+            label: 'Ventas',
+            data: sellVols,
+            backgroundColor: 'rgba(240,80,80,.5)',
+            borderColor: 'rgba(240,80,80,.8)',
+            borderWidth: 1,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { labels: { color: '#8892a8', font: { family: 'DM Mono', size: 10 } } },
+          tooltip: {
+            callbacks: {
+              label: ctx => ctx.dataset.label + ': ' + fmtVal(ctx.raw),
+            },
+          },
+        },
+        scales: {
+          x: {
+            ticks: { color: '#8892a8', font: { family: 'DM Mono', size: 9 }, maxRotation: 45 },
+            grid:  { color: '#1c2035' },
+          },
+          y: {
+            ticks: {
+              color: '#8892a8',
+              font: { family: 'DM Mono', size: 9 },
+              callback: v => '$' + (v / tickDiv).toFixed(tickDiv === 1 ? 0 : 1) + tickSuffix,
+            },
+            grid: { color: '#1c2035' },
+          },
+        },
+      },
+    });
+  }
+
+  function insSignal(buys, sells, buyVol, sellVol, topRelationship) {
+    if (buys >= 3 && buyVol > sellVol * 2) return '🟢 Cluster buy';
+    if (sells >= 3 && sellVol > buyVol * 2) return '🔴 Cluster sell';
+    if (topRelationship === 'Officer' && buys > 0) return '🔵 C-Suite buy';
+    return '🟡 Mixto';
+  }
+
+  function insRenderTable(data) {
+    const tbody = document.getElementById('ins-tbl-asset');
+    if (!tbody) return;
+
+    // Agrupar por ticker
+    const byTicker = {};
+    data.forEach(t => {
+      const tk = t.ticker || '—';
+      if (!byTicker[tk]) {
+        byTicker[tk] = {
+          ticker: tk, issuer_name: t.issuer_name || '—', sector: t.sector || '—',
+          buys: 0, buyVol: 0, sells: 0, sellVol: 0,
+          lastDate: '', topInsider: '', topRelationship: '',
+          relationships: {},
+        };
+      }
+      const g = byTicker[tk];
+      if ((t.date || '') > g.lastDate) {
+        g.lastDate    = t.date || '';
+        g.topInsider  = t.insider_name || '—';
+        g.topRelationship = t.relationship || '';
+      }
+      // track relationship types
+      const rel = t.relationship || 'Other';
+      g.relationships[rel] = (g.relationships[rel] || 0) + 1;
+
+      if (t.type === 'B') { g.buys++;  g.buyVol  += (t.value || 0); }
+      else                { g.sells++; g.sellVol += (t.value || 0); }
+    });
+
+    // Sort by total volume desc
+    const rows = Object.values(byTicker).sort((a, b) =>
+      (b.buyVol + b.sellVol) - (a.buyVol + a.sellVol)
+    );
+
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="11" class="ins-empty">Sin datos para el período seleccionado</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = rows.map(r => {
+      // Top relationship = most frequent
+      const topRel = Object.entries(r.relationships).sort((a, b) => b[1] - a[1])[0]?.[0] || '';
+      const neto    = r.buyVol - r.sellVol;
+      const signal  = insSignal(r.buys, r.sells, r.buyVol, r.sellVol, topRel);
+      const netoClass = neto >= 0 ? 'ins-badge-buy' : 'ins-badge-sell';
+      return `<tr>
+        <td class="ins-ticker">${esc(r.ticker)}</td>
+        <td>${esc(r.issuer_name)}</td>
+        <td>${esc(r.sector)}</td>
+        <td class="ins-badge-buy">${r.buys}</td>
+        <td class="ins-badge-buy">${fmtVal(r.buyVol)}</td>
+        <td class="ins-badge-sell">${r.sells}</td>
+        <td class="ins-badge-sell">${fmtVal(r.sellVol)}</td>
+        <td class="${netoClass}">${fmtVal(neto)}</td>
+        <td>${esc(r.lastDate)}</td>
+        <td>${esc(r.topInsider)}</td>
+        <td class="ins-signal">${signal}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  function insRenderDetail(data) {
+    const tbody = document.getElementById('ins-tbl-detail');
+    if (!tbody) return;
+
+    const top100 = data.slice(0, 100);
+
+    if (!top100.length) {
+      tbody.innerHTML = '<tr><td colspan="10" class="ins-empty">Sin datos para el período seleccionado</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = top100.map(t => {
+      const typeClass = t.type === 'B' ? 'ins-badge-buy' : 'ins-badge-sell';
+      const typeLabel = t.type === 'B' ? '▲ COMPRA' : '▼ VENTA';
+      return `<tr>
+        <td>${esc(t.date || '—')}</td>
+        <td class="ins-ticker">${esc(t.ticker || '—')}</td>
+        <td>${esc(t.issuer_name || '—')}</td>
+        <td>${esc(t.insider_name || '—')}</td>
+        <td>${esc(t.title || t.relationship || '—')}</td>
+        <td class="${typeClass}">${typeLabel}</td>
+        <td>${fmtNum(t.shares)}</td>
+        <td>${t.price != null ? '$' + Number(t.price).toFixed(2) : '—'}</td>
+        <td>${fmtVal(t.value)}</td>
+        <td>${esc(t.sector || '—')}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  function esc(s) {
+    return String(s || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+})(); // fin IIFE insider
 
 </script>
 </body>
