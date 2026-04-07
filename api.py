@@ -1026,38 +1026,64 @@ def _sec_wait():
         time.sleep(0.05)
 
 
+def _sec_get_with_retry(url, headers, timeout=10):
+    """GET a SEC con rate limiting y retry en 429."""
+    import time
+    _sec_wait()
+    r = req.get(url, headers=headers, timeout=timeout)
+    if r.status_code == 429:
+        time.sleep(2.0)
+        _sec_wait()
+        r = req.get(url, headers=headers, timeout=timeout)
+    return r
+
+
 def _process_filing(hit):
     """Procesa un hit de EFTS: _id tiene formato {accession}:{xml_file}."""
     try:
         raw_id = hit.get('_id', '')
-        # Formato real: "0001493152-26-015387:ownership.xml"
-        if ':' in raw_id:
-            accession, xml_doc = raw_id.split(':', 1)
-        else:
-            return []  # sin xml_doc no podemos hacer nada
+        if ':' not in raw_id:
+            return []
+        accession, xml_doc_hint = raw_id.split(':', 1)
 
         parts = accession.split('-')
         if len(parts) < 3:
             return []
-        cik     = parts[0]          # "0001493152"
-        nodash  = accession.replace('-', '')  # "000149315226015387"
-        cik_int = int(cik)
+        cik_int = int(parts[0])
+        nodash  = accession.replace('-', '')
 
-        xml_url = f'https://www.sec.gov/Archives/edgar/data/{cik_int}/{nodash}/{xml_doc}'
-        _sec_wait()
-        xr = req.get(xml_url, headers=_SEC_HEADERS_XML, timeout=10)
-        if xr.status_code == 429:
-            import time; time.sleep(1.0)
-            _sec_wait()
-            xr = req.get(xml_url, headers=_SEC_HEADERS_XML, timeout=10)
-        if xr.status_code != 200:
-            return []
+        # 1. Intentar XML directo con el hint del _id
+        xml_content = None
+        direct_url = f'https://www.sec.gov/Archives/edgar/data/{cik_int}/{nodash}/{xml_doc_hint}'
+        dr = _sec_get_with_retry(direct_url, _SEC_HEADERS_XML)
+        if dr.status_code == 200:
+            xml_content = dr.content
+        else:
+            # 2. Fallback: index JSON para obtener la ruta real del XML
+            index_url = f'https://www.sec.gov/Archives/edgar/data/{cik_int}/{nodash}/{accession}-index.json'
+            ir = _sec_get_with_retry(index_url, _SEC_HEADERS)
+            if ir.status_code != 200:
+                return []
+            xml_doc = None
+            for doc in ir.json().get('documents', []):
+                if doc.get('type') == '4' and doc.get('document', '').lower().endswith('.xml'):
+                    xml_doc = doc.get('document')
+                    break
+            if not xml_doc:
+                return []
+            xr = _sec_get_with_retry(
+                f'https://www.sec.gov/Archives/edgar/data/{cik_int}/{nodash}/{xml_doc}',
+                _SEC_HEADERS_XML
+            )
+            if xr.status_code != 200:
+                return []
+            xml_content = xr.content
 
-        trades = _parse_form4_xml(xr.content)
+        trades = _parse_form4_xml(xml_content)
         if not trades:
             return []
 
-        sector = _get_cik_sector(str(trades[0].get('issuer_cik') or cik).zfill(10))
+        sector = _get_cik_sector(str(trades[0].get('issuer_cik') or parts[0]).zfill(10))
         for t in trades:
             t['sector'] = sector
             t.pop('issuer_cik', None)
@@ -1182,10 +1208,15 @@ def api_insider_debug():
             nodash  = accession.replace('-', '')
             xml_url = f'https://www.sec.gov/Archives/edgar/data/{cik_int}/{nodash}/{xml_doc}'
             info['xml_url'] = xml_url
-            _sec_wait()
-            xr = req.get(xml_url, headers=_SEC_HEADERS_XML, timeout=10)
+            xr = _sec_get_with_retry(xml_url, _SEC_HEADERS_XML)
             info['xml_status'] = xr.status_code
             if xr.status_code != 200:
+                # Intentar index JSON
+                idx_url = f'https://www.sec.gov/Archives/edgar/data/{cik_int}/{nodash}/{accession}-index.json'
+                ir = _sec_get_with_retry(idx_url, _SEC_HEADERS)
+                info['index_status'] = ir.status_code
+                if ir.status_code == 200:
+                    info['index_docs'] = [d.get('document') for d in ir.json().get('documents', [])]
                 results.append(info)
                 continue
             content = xr.content
