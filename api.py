@@ -1129,6 +1129,67 @@ def api_insider_ping():
         return jsonify({'ok': False, 'msg': str(e), 'elapsed_s': round(time.time() - t0, 2)}), 500
 
 
+@app.route('/api/insider/debug', methods=['GET'])
+def api_insider_debug():
+    """Diagnóstico detallado: traza el primer filing paso a paso."""
+    import time, xml.etree.ElementTree as ET
+    t0 = time.time()
+    try:
+        from datetime import datetime, timedelta
+        end_s   = datetime.utcnow().strftime('%Y-%m-%d')
+        start_s = (datetime.utcnow() - timedelta(days=14)).strftime('%Y-%m-%d')
+        efts_url = (f'https://efts.sec.gov/LATEST/search-index?q=&forms=4'
+                    f'&dateRange=custom&startdt={start_s}&enddt={end_s}&from=0&size=5')
+        r = req.get(efts_url, headers=_SEC_HEADERS, timeout=10)
+        hits = r.json().get('hits', {}).get('hits', [])
+
+        results = []
+        for hit in hits[:5]:
+            raw_id = hit.get('_id', '')
+            info = {'raw_id': raw_id}
+            if ':' not in raw_id:
+                info['error'] = 'no colon in _id'
+                results.append(info)
+                continue
+            accession, xml_doc = raw_id.split(':', 1)
+            parts = accession.split('-')
+            cik_int = int(parts[0])
+            nodash  = accession.replace('-', '')
+            xml_url = f'https://www.sec.gov/Archives/edgar/data/{cik_int}/{nodash}/{xml_doc}'
+            info['xml_url'] = xml_url
+            xr = req.get(xml_url, headers=_SEC_HEADERS_XML, timeout=10)
+            info['xml_status'] = xr.status_code
+            if xr.status_code != 200:
+                results.append(info)
+                continue
+            content = xr.content
+            info['xml_bytes'] = len(content)
+            info['xml_preview'] = content[:300].decode('utf-8', errors='replace')
+            # Try parse
+            xml_clean = content.replace(b' xmlns=', b' xmlnsIgnore=')
+            try:
+                root = ET.fromstring(xml_clean)
+                # Find all transaction codes
+                codes = []
+                for tbl in ['nonDerivativeTable', 'derivativeTable']:
+                    tbl_el = root.find(tbl)
+                    if tbl_el is not None:
+                        for txn_tag in ['nonDerivativeTransaction', 'derivativeTransaction']:
+                            for txn in tbl_el.findall(txn_tag):
+                                code_el = txn.find('transactionAmounts/transactionCode')
+                                if code_el is not None and code_el.text:
+                                    codes.append(code_el.text.strip())
+                info['transaction_codes'] = codes
+                info['parse_ok'] = True
+            except Exception as pe:
+                info['parse_error'] = str(pe)
+            results.append(info)
+
+        return jsonify({'ok': True, 'elapsed_s': round(time.time()-t0,2), 'filings': results})
+    except Exception as e:
+        return jsonify({'ok': False, 'msg': str(e)}), 500
+
+
 @app.route('/api/insider', methods=['GET'])
 def api_insider():
     import time
