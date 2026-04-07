@@ -1007,9 +1007,74 @@ def _parse_form4_xml(xml_bytes):
         })
     return trades
 
-def _fetch_insider_data(days):
-    """Descarga y procesa Form 4 filings de SEC EDGAR."""
+_SEC_RATE_LOCK   = __import__('threading').Lock()
+_SEC_LAST_REQ    = [0.0]
+_MIN_SEC_INTERVAL = 0.13  # ~7.5 req/s — debajo del límite de 10 req/s de SEC
+
+def _sec_get(url, headers, timeout=12):
+    """GET a SEC con rate limiting global (~7.5 req/s)."""
     import time
+    with _SEC_RATE_LOCK:
+        now = time.time()
+        wait = _MIN_SEC_INTERVAL - (now - _SEC_LAST_REQ[0])
+        if wait > 0:
+            time.sleep(wait)
+        _SEC_LAST_REQ[0] = time.time()
+    return req.get(url, headers=headers, timeout=timeout)
+
+
+def _process_filing(hit):
+    """Procesa un hit de EFTS: descarga index JSON + XML, retorna lista de trades."""
+    try:
+        _id = hit.get('_id', '')
+        parts = _id.split('-')
+        if len(parts) < 3:
+            return []
+        cik     = parts[0]
+        nodash  = _id.replace('-', '')
+        cik_int = int(cik)
+
+        # 1. Index JSON
+        index_url = f'https://www.sec.gov/Archives/edgar/data/{cik_int}/{nodash}/{_id}-index.json'
+        ir = _sec_get(index_url, _SEC_HEADERS)
+        if ir.status_code != 200:
+            return []
+        idx = ir.json()
+
+        # 2. Archivo XML de tipo "4"
+        xml_doc = None
+        for doc in idx.get('documents', []):
+            if doc.get('type') == '4' and doc.get('document', '').lower().endswith('.xml'):
+                xml_doc = doc.get('document')
+                break
+        if not xml_doc:
+            return []
+
+        xml_url = f'https://www.sec.gov/Archives/edgar/data/{cik_int}/{nodash}/{xml_doc}'
+        xr = _sec_get(xml_url, _SEC_HEADERS_XML)
+        if xr.status_code != 200:
+            return []
+
+        trades = _parse_form4_xml(xr.content)
+        if not trades:
+            return []
+
+        # 3. Sector del issuer (usa cache; solo llama a SEC si no está en cache)
+        issuer_cik = trades[0].get('issuer_cik') or cik
+        sector = _get_cik_sector(str(issuer_cik).zfill(10))
+
+        for t in trades:
+            t['sector'] = sector
+            t.pop('issuer_cik', None)
+        return trades
+    except Exception:
+        return []
+
+
+def _fetch_insider_data(days):
+    """Descarga y procesa Form 4 filings de SEC EDGAR (concurrente)."""
+    import time
+    import concurrent.futures
     from datetime import datetime, timedelta
 
     end_dt   = datetime.utcnow()
@@ -1017,10 +1082,10 @@ def _fetch_insider_data(days):
     start_s  = start_dt.strftime('%Y-%m-%d')
     end_s    = end_dt.strftime('%Y-%m-%d')
 
-    all_trades = []
-    max_filings = 150
+    # ── 1. Recopilar hits de EFTS (hasta 40 filings) ──────────────────────────
+    hits_all = []
+    max_filings = 40
     page_size   = 20
-    fetched     = 0
 
     for offset in range(0, max_filings, page_size):
         url = (
@@ -1036,66 +1101,46 @@ def _fetch_insider_data(days):
             hits = d.get('hits', {}).get('hits', [])
             if not hits:
                 break
+            hits_all.extend(hits)
+            if len(hits) < page_size:
+                break
         except Exception:
             break
 
-        for hit in hits:
+    if not hits_all:
+        return []
+
+    # ── 2. Procesar filings en paralelo (4 workers) ──────────────────────────
+    all_trades = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+        futures = {pool.submit(_process_filing, h): h for h in hits_all}
+        for fut in concurrent.futures.as_completed(futures, timeout=45):
             try:
-                _id = hit.get('_id', '')
-                # _id formato: 0001234567-25-000001
-                parts = _id.split('-')
-                if len(parts) < 3:
-                    continue
-                cik    = parts[0]        # primeros 10 dígitos (con ceros)
-                nodash = _id.replace('-', '')
-                cik_int = int(cik)
-
-                index_url = f'https://www.sec.gov/Archives/edgar/data/{cik_int}/{nodash}/{_id}-index.json'
-                time.sleep(0.12)
-                ir = req.get(index_url, headers=_SEC_HEADERS, timeout=12)
-                if ir.status_code != 200:
-                    continue
-                idx = ir.json()
-
-                # Buscar documento XML de tipo "4"
-                xml_doc = None
-                for doc in idx.get('documents', []):
-                    if doc.get('type') == '4' and doc.get('document', '').lower().endswith('.xml'):
-                        xml_doc = doc.get('document')
-                        break
-                if not xml_doc:
-                    continue
-
-                xml_url = f'https://www.sec.gov/Archives/edgar/data/{cik_int}/{nodash}/{xml_doc}'
-                time.sleep(0.12)
-                xr = req.get(xml_url, headers=_SEC_HEADERS_XML, timeout=12)
-                if xr.status_code != 200:
-                    continue
-
-                trades = _parse_form4_xml(xr.content)
-                if not trades:
-                    continue
-
-                # Obtener sector del issuer
-                issuer_cik = trades[0].get('issuer_cik') or cik
-                issuer_cik_str = str(issuer_cik).zfill(10)
-                time.sleep(0.12)
-                sector = _get_cik_sector(issuer_cik_str)
-
-                for t in trades:
-                    t['sector'] = sector
-                    # Limpiar campo interno
-                    t.pop('issuer_cik', None)
-                    all_trades.append(t)
-
-                fetched += 1
+                trades = fut.result()
+                all_trades.extend(trades)
             except Exception:
-                continue
-
-        if len(hits) < page_size:
-            break
+                pass
 
     return all_trades
+
+
+@app.route('/api/insider/ping', methods=['GET'])
+def api_insider_ping():
+    """Diagnóstico: verifica conectividad a SEC EDGAR."""
+    try:
+        from datetime import datetime, timedelta
+        end_s   = datetime.utcnow().strftime('%Y-%m-%d')
+        start_s = (datetime.utcnow() - timedelta(days=7)).strftime('%Y-%m-%d')
+        url = (f'https://efts.sec.gov/LATEST/search-index?q=&forms=4'
+               f'&dateRange=custom&startdt={start_s}&enddt={end_s}&from=0&size=3')
+        r = req.get(url, headers=_SEC_HEADERS, timeout=10)
+        d = r.json()
+        hits = d.get('hits', {}).get('hits', [])
+        return jsonify({'ok': True, 'status': r.status_code,
+                        'hits_sample': [h.get('_id') for h in hits[:3]],
+                        'total': d.get('hits', {}).get('total', {})})
+    except Exception as e:
+        return jsonify({'ok': False, 'msg': str(e)}), 500
 
 
 @app.route('/api/insider', methods=['GET'])
