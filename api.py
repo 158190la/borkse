@@ -921,6 +921,7 @@ def _get_cik_sector(cik_str):
     try:
         cik_10 = cik_str.zfill(10)
         url = f'https://data.sec.gov/submissions/CIK{cik_10}.json'
+        _sec_wait()
         r = req.get(url, headers=_SEC_HEADERS, timeout=10)
         if r.status_code == 200:
             d = r.json()
@@ -1007,6 +1008,24 @@ def _parse_form4_xml(xml_bytes):
         })
     return trades
 
+# ── Token bucket: max 7 req/s a SEC ──────────────────────────────────────────
+_SEC_TB = {'tokens': 7.0, 'last': 0.0}
+_SEC_TB_LOCK = __import__('threading').Lock()
+
+def _sec_wait():
+    """Consume un token del bucket; bloquea hasta tener uno (max 7 req/s)."""
+    import time
+    while True:
+        with _SEC_TB_LOCK:
+            now = time.time()
+            _SEC_TB['tokens'] = min(7.0, _SEC_TB['tokens'] + (now - _SEC_TB['last']) * 7.0)
+            _SEC_TB['last'] = now
+            if _SEC_TB['tokens'] >= 1.0:
+                _SEC_TB['tokens'] -= 1.0
+                return
+        time.sleep(0.05)
+
+
 def _process_filing(hit):
     """Procesa un hit de EFTS: _id tiene formato {accession}:{xml_file}."""
     try:
@@ -1025,7 +1044,12 @@ def _process_filing(hit):
         cik_int = int(cik)
 
         xml_url = f'https://www.sec.gov/Archives/edgar/data/{cik_int}/{nodash}/{xml_doc}'
+        _sec_wait()
         xr = req.get(xml_url, headers=_SEC_HEADERS_XML, timeout=10)
+        if xr.status_code == 429:
+            import time; time.sleep(1.0)
+            _sec_wait()
+            xr = req.get(xml_url, headers=_SEC_HEADERS_XML, timeout=10)
         if xr.status_code != 200:
             return []
 
@@ -1052,9 +1076,10 @@ def _fetch_insider_data(days):
     start_s  = start_dt.strftime('%Y-%m-%d')
     end_s    = end_dt.strftime('%Y-%m-%d')
 
-    # ── 1. EFTS: 5 páginas × 20 = hasta 100 hits ─────────────────────────────
+    # ── 1. EFTS: 3 páginas × 20 = hasta 60 hits ──────────────────────────────
+    # 60 requests a 7 req/s = ~9s + overhead → seguro bajo timeout de Railway
     hits_all = []
-    for offset in range(0, 100, 20):
+    for offset in range(0, 60, 20):
         try:
             url = (
                 f'https://efts.sec.gov/LATEST/search-index?q=&forms=4'
@@ -1157,6 +1182,7 @@ def api_insider_debug():
             nodash  = accession.replace('-', '')
             xml_url = f'https://www.sec.gov/Archives/edgar/data/{cik_int}/{nodash}/{xml_doc}'
             info['xml_url'] = xml_url
+            _sec_wait()
             xr = req.get(xml_url, headers=_SEC_HEADERS_XML, timeout=10)
             info['xml_status'] = xr.status_code
             if xr.status_code != 200:
