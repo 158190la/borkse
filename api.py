@@ -1008,321 +1008,125 @@ def _parse_form4_xml(xml_bytes):
         })
     return trades
 
-# ── Token bucket: max 7 req/s a SEC ──────────────────────────────────────────
-_SEC_TB = {'tokens': 7.0, 'last': 0.0}
-_SEC_TB_LOCK = __import__('threading').Lock()
+# ── Watchlist S&P 500: (ticker, CIK) ─────────────────────────────────────────
+_WATCHLIST = [
+    ('AAPL',320193),  ('MSFT',789019),  ('NVDA',1045810), ('AMZN',1018724),
+    ('GOOGL',1652044),('META',1326801), ('TSLA',1318605), ('BRK',1067983),
+    ('JPM',19617),    ('V',1403161),    ('MA',1141391),   ('XOM',34088),
+    ('UNH',731766),   ('JNJ',200406),   ('WMT',104169),   ('PG',80424),
+    ('HD',354950),    ('BAC',70858),    ('CVX',93410),    ('PFE',78003),
+    ('ABBV',1551152), ('KO',21344),     ('MRK',310158),   ('AVGO',1730168),
+    ('LLY',59478),    ('COST',909832),  ('MCD',63754),    ('TMO',97476),
+    ('CSCO',858877),  ('ACN',1467373),  ('CRM',1108524),  ('NFLX',1065280),
+    ('AMD',2488),     ('INTC',50863),   ('ORCL',1341439), ('IBM',51143),
+    ('GS',886982),    ('MS',895421),    ('C',831001),     ('WFC',72971),
+    ('AXP',4962),     ('BLK',1364742),  ('SCHW',316888),  ('T',732717),
+    ('VZ',732712),    ('DIS',1001039),  ('NKE',320187),   ('BA',12927),
+]
 
-def _sec_wait():
-    """Consume un token del bucket; bloquea hasta tener uno (max 7 req/s)."""
+
+def _fetch_company_form4(ticker, cik, cutoff):
+    """Descarga Form 4 recientes de una empresa vía submissions API."""
     import time
-    while True:
-        with _SEC_TB_LOCK:
-            now = time.time()
-            _SEC_TB['tokens'] = min(7.0, _SEC_TB['tokens'] + (now - _SEC_TB['last']) * 7.0)
-            _SEC_TB['last'] = now
-            if _SEC_TB['tokens'] >= 1.0:
-                _SEC_TB['tokens'] -= 1.0
-                return
-        time.sleep(0.05)
-
-
-def _sec_get_with_retry(url, headers, timeout=10):
-    """GET a SEC con rate limiting y retry en 429."""
-    import time
-    _sec_wait()
-    r = req.get(url, headers=headers, timeout=timeout)
-    if r.status_code == 429:
-        time.sleep(2.0)
-        _sec_wait()
-        r = req.get(url, headers=headers, timeout=timeout)
-    return r
-
-
-def _process_filing(hit):
-    """Procesa un hit de EFTS: _id tiene formato {accession}:{xml_file}."""
+    from datetime import datetime
     try:
-        raw_id = hit.get('_id', '')
-        if ':' not in raw_id:
+        url = f'https://data.sec.gov/submissions/CIK{str(cik).zfill(10)}.json'
+        r = req.get(url, headers=_SEC_HEADERS, timeout=10)
+        if r.status_code != 200:
             return []
-        accession, xml_doc_hint = raw_id.split(':', 1)
+        data   = r.json()
+        recent = data.get('filings', {}).get('recent', {})
+        forms  = recent.get('form', [])
+        dates  = recent.get('filingDate', [])
+        accs   = recent.get('accessionNumber', [])
+        docs   = recent.get('primaryDocument', [])
 
-        parts = accession.split('-')
-        if len(parts) < 3:
-            return []
-        cik_int = int(parts[0])
-        nodash  = accession.replace('-', '')
-
-        # 1. Intentar XML directo con el hint del _id
-        xml_content = None
-        direct_url = f'https://www.sec.gov/Archives/edgar/data/{cik_int}/{nodash}/{xml_doc_hint}'
-        dr = _sec_get_with_retry(direct_url, _SEC_HEADERS_XML)
-        if dr.status_code == 200:
-            xml_content = dr.content
-        else:
-            # 2. Fallback: index JSON para obtener la ruta real del XML
-            index_url = f'https://www.sec.gov/Archives/edgar/data/{cik_int}/{nodash}/{accession}-index.json'
-            ir = _sec_get_with_retry(index_url, _SEC_HEADERS)
-            if ir.status_code != 200:
-                return []
-            xml_doc = None
-            for doc in ir.json().get('documents', []):
-                if doc.get('type') == '4' and doc.get('document', '').lower().endswith('.xml'):
-                    xml_doc = doc.get('document')
+        trades = []
+        for i, form in enumerate(forms):
+            if form != '4':
+                continue
+            try:
+                if datetime.strptime(dates[i], '%Y-%m-%d').date() < cutoff:
                     break
-            if not xml_doc:
-                return []
-            xr = _sec_get_with_retry(
-                f'https://www.sec.gov/Archives/edgar/data/{cik_int}/{nodash}/{xml_doc}',
-                _SEC_HEADERS_XML
-            )
+            except Exception:
+                continue
+
+            acc    = accs[i].replace('-', '')
+            xmlf   = docs[i] if i < len(docs) else ''
+            if not xmlf or not xmlf.lower().endswith('.xml'):
+                continue
+
+            time.sleep(0.12)
+            xr = req.get(
+                f'https://www.sec.gov/Archives/edgar/data/{cik}/{acc}/{xmlf}',
+                headers=_SEC_HEADERS_XML, timeout=10)
             if xr.status_code != 200:
-                return []
-            xml_content = xr.content
+                continue
 
-        trades = _parse_form4_xml(xml_content)
-        if not trades:
-            return []
-
-        sector = _get_cik_sector(str(trades[0].get('issuer_cik') or parts[0]).zfill(10))
-        for t in trades:
-            t['sector'] = sector
-            t.pop('issuer_cik', None)
-        return trades
-    except Exception:
-        return []
-
-
-def _fetch_rss_filings(days):
-    """
-    Obtiene Form 4 recientes del RSS feed de EDGAR.
-    Retorna lista de dicts: {cik, nodash, accession}
-    """
-    import xml.etree.ElementTree as ET, re
-    from datetime import datetime, timedelta
-
-    cutoff = (datetime.utcnow() - timedelta(days=days)).date()
-    filings = []
-    seen = set()
-
-    for start in range(0, 200, 40):
-        url = (f'https://www.sec.gov/cgi-bin/browse-edgar'
-               f'?action=getcurrent&type=4&dateb=&owner=include'
-               f'&count=40&start={start}&output=atom')
-        try:
-            r = req.get(url, headers={**_SEC_HEADERS, 'Accept': 'application/atom+xml'}, timeout=15)
-            if r.status_code != 200:
-                break
-            root = ET.fromstring(r.content)
-            ns = {'atom': 'http://www.w3.org/2005/Atom'}
-            entries = root.findall('atom:entry', ns)
-            if not entries:
-                break
-            found_old = False
-            for entry in entries:
-                # Filtrar: solo Form 4 exacto (título empieza con "4 -")
-                title_el = entry.find('atom:title', ns)
-                if title_el is None or not (title_el.text or '').strip().startswith('4 '):
-                    continue
-
-                # Fecha de filing (elemento SEC con namespace)
-                date_el = entry.find('{https://www.sec.gov/Archives/edgar}filing-date')
-                if date_el is not None and date_el.text:
-                    try:
-                        fdate = datetime.strptime(date_el.text.strip(), '%Y-%m-%d').date()
-                        if fdate < cutoff:
-                            found_old = True
-                            break
-                    except Exception:
-                        pass
-
-                link_el = entry.find('atom:link', ns)
-                if link_el is None:
-                    continue
-                href = link_el.get('href', '')
-                m = re.search(r'/edgar/data/(\d+)/(\w+)/([0-9\-]+)-index\.htm', href)
-                if not m:
-                    continue
-                key = m.group(3)  # accession como dedup key
-                if key in seen:
-                    continue
-                seen.add(key)
-                filings.append({'cik': m.group(1), 'nodash': m.group(2), 'accession': m.group(3)})
-            if found_old or len(entries) < 40:
-                break
-        except Exception:
-            break
-
-    return filings
-
-
-def _process_filing_by_index(filing):
-    """Descarga index JSON → XML → trades para un filing."""
-    try:
-        cik     = filing['cik']
-        nodash  = filing['nodash']
-        accession = filing['accession']
-        cik_int = int(cik)
-
-        index_url = f'https://www.sec.gov/Archives/edgar/data/{cik_int}/{nodash}/{accession}-index.json'
-        ir = _sec_get_with_retry(index_url, _SEC_HEADERS)
-        if ir.status_code != 200:
-            return []
-
-        xml_doc = None
-        for doc in ir.json().get('documents', []):
-            if doc.get('type') == '4' and doc.get('document', '').lower().endswith('.xml'):
-                xml_doc = doc.get('document')
-                break
-        if not xml_doc:
-            return []
-
-        xr = _sec_get_with_retry(
-            f'https://www.sec.gov/Archives/edgar/data/{cik_int}/{nodash}/{xml_doc}',
-            _SEC_HEADERS_XML
-        )
-        if xr.status_code != 200:
-            return []
-
-        trades = _parse_form4_xml(xr.content)
-        if not trades:
-            return []
-
-        sector = _get_cik_sector(str(trades[0].get('issuer_cik') or cik).zfill(10))
-        for t in trades:
-            t['sector'] = sector
-            t.pop('issuer_cik', None)
+            for t in _parse_form4_xml(xr.content):
+                t['sector'] = _sic_to_sector(data.get('sic', ''))
+                t.pop('issuer_cik', None)
+                trades.append(t)
         return trades
     except Exception:
         return []
 
 
 def _fetch_insider_data(days):
-    """Descarga Form 4 del RSS feed de EDGAR + procesa con 6 workers."""
+    """Descarga Form 4 de watchlist S&P 500 vía submissions API."""
     import concurrent.futures
+    from datetime import datetime, timedelta
 
-    filings = _fetch_rss_filings(days)
-    if not filings:
-        return []
+    cutoff = (datetime.utcnow() - timedelta(days=days)).date()
 
     all_trades = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
-        futures = [pool.submit(_process_filing_by_index, f) for f in filings]
-        for fut in concurrent.futures.as_completed(futures, timeout=50):
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
+        futs = {pool.submit(_fetch_company_form4, tk, cik, cutoff): tk
+                for tk, cik in _WATCHLIST}
+        for fut in concurrent.futures.as_completed(futs, timeout=50):
             try:
                 all_trades.extend(fut.result())
             except Exception:
                 pass
-
     return all_trades
 
 
 @app.route('/api/insider/ping', methods=['GET'])
 def api_insider_ping():
-    """Diagnóstico: prueba RSS feed + primer filing procesado."""
+    """Diagnóstico: prueba submissions API para AAPL y MSFT."""
     import time, concurrent.futures as cf
+    from datetime import datetime, timedelta
     t0 = time.time()
     try:
-        filings = _fetch_rss_filings(7)
-        sample_trades = []
-        filings_with_trades = 0
-        with cf.ThreadPoolExecutor(max_workers=6) as pool:
-            futs = [pool.submit(_process_filing_by_index, f) for f in filings[:20]]
-            for fut in cf.as_completed(futs, timeout=25):
-                try:
-                    t = fut.result()
-                    if t:
-                        filings_with_trades += 1
-                        if not sample_trades:
-                            sample_trades = t[:3]
-                except Exception:
-                    pass
-        return jsonify({
-            'ok': True,
-            'rss_filings_found': len(filings),
-            'filings_checked': min(20, len(filings)),
-            'filings_with_trades': filings_with_trades,
-            'sample_trades': sample_trades,
-            'elapsed_s': round(time.time() - t0, 2),
-        })
+        cutoff = (datetime.utcnow() - timedelta(days=30)).date()
+        results = {}
+        for ticker, cik in [('AAPL', 320193), ('MSFT', 789019), ('NVDA', 1045810)]:
+            trades = _fetch_company_form4(ticker, cik, cutoff)
+            results[ticker] = {'trades': len(trades), 'sample': trades[:2]}
+        return jsonify({'ok': True, 'elapsed_s': round(time.time()-t0, 2), 'results': results})
     except Exception as e:
-        return jsonify({'ok': False, 'msg': str(e), 'elapsed_s': round(time.time() - t0, 2)}), 500
+        return jsonify({'ok': False, 'msg': str(e)}), 500
 
 
 @app.route('/api/insider/debug', methods=['GET'])
 def api_insider_debug():
-    """Diagnóstico: traza los primeros 8 Form 4 del RSS paso a paso."""
-    import time, xml.etree.ElementTree as ET
+    """Diagnóstico: muestra submissions JSON de AAPL."""
+    import time
     t0 = time.time()
     try:
-        filings = _fetch_rss_filings(30)[:8]
-        results = []
-        for f in filings:
-            cik_int = int(f['cik'])
-            nodash  = f['nodash']
-            acc     = f['accession']
-            info    = {'accession': acc, 'cik': f['cik']}
-
-            # Index JSON
-            idx_url = f'https://www.sec.gov/Archives/edgar/data/{cik_int}/{nodash}/{acc}-index.json'
-            info['index_url'] = idx_url
-            ir = _sec_get_with_retry(idx_url, _SEC_HEADERS)
-            info['index_status'] = ir.status_code
-            if ir.status_code != 200:
-                # También probar con CIK del accession (filer)
-                acc_cik = int(acc.split('-')[0])
-                if acc_cik != cik_int:
-                    alt_url = f'https://www.sec.gov/Archives/edgar/data/{acc_cik}/{nodash}/{acc}-index.json'
-                    ar = _sec_get_with_retry(alt_url, _SEC_HEADERS)
-                    info['alt_index_status'] = ar.status_code
-                    info['alt_index_url'] = alt_url
-                    if ar.status_code == 200:
-                        ir = ar
-                        cik_int = acc_cik
-                        info['index_status'] = 200
-                if info['index_status'] != 200:
-                    results.append(info)
-                    continue
-
-            docs = ir.json().get('documents', [])
-            info['docs'] = [{'type': d.get('type'), 'doc': d.get('document')} for d in docs[:5]]
-
-            xml_doc = next((d.get('document') for d in docs
-                           if d.get('type') == '4' and (d.get('document') or '').lower().endswith('.xml')), None)
-            info['xml_doc'] = xml_doc
-            if not xml_doc:
-                results.append(info)
-                continue
-
-            xr = _sec_get_with_retry(
-                f'https://www.sec.gov/Archives/edgar/data/{cik_int}/{nodash}/{xml_doc}',
-                _SEC_HEADERS_XML)
-            info['xml_status'] = xr.status_code
-            if xr.status_code != 200:
-                results.append(info)
-                continue
-
-            xml_clean = xr.content.replace(b' xmlns=', b' xmlnsIgnore=')
-            try:
-                root = ET.fromstring(xml_clean)
-                codes = []
-                for tbl in ['nonDerivativeTable', 'derivativeTable']:
-                    tbl_el = root.find(tbl)
-                    if tbl_el is not None:
-                        for ttag in ['nonDerivativeTransaction', 'derivativeTransaction']:
-                            for txn in tbl_el.findall(ttag):
-                                cel = txn.find('transactionAmounts/transactionCode')
-                                if cel is not None and cel.text:
-                                    codes.append(cel.text.strip())
-                info['codes'] = codes
-                ticker_el = root.find('issuer/issuerTradingSymbol')
-                info['ticker'] = (ticker_el.text or '').strip() if ticker_el is not None else ''
-            except Exception as pe:
-                info['parse_error'] = str(pe)
-            results.append(info)
-
-        return jsonify({'ok': True, 'elapsed_s': round(time.time()-t0, 2), 'filings': results})
-
-        return jsonify({'ok': True, 'elapsed_s': round(time.time()-t0,2), 'filings': results})
+        r = req.get('https://data.sec.gov/submissions/CIK0000320193.json',
+                    headers=_SEC_HEADERS, timeout=10)
+        d = r.json()
+        recent = d.get('filings', {}).get('recent', {})
+        forms  = recent.get('form', [])[:20]
+        dates  = recent.get('filingDate', [])[:20]
+        accs   = recent.get('accessionNumber', [])[:20]
+        docs   = recent.get('primaryDocument', [])[:20]
+        form4s = [{'form': forms[i], 'date': dates[i], 'acc': accs[i], 'doc': docs[i]}
+                  for i in range(len(forms)) if forms[i] == '4']
+        return jsonify({'ok': True, 'status': r.status_code,
+                        'elapsed_s': round(time.time()-t0, 2),
+                        'form4s': form4s[:5]})
     except Exception as e:
         return jsonify({'ok': False, 'msg': str(e)}), 500
 
