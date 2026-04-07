@@ -982,7 +982,7 @@ def _parse_form4_xml(xml_bytes):
         return trades
 
     for txn in nd_table.findall('nonDerivativeTransaction'):
-        code = txt(txn, 'transactionAmounts/transactionCode')
+        code = txt(txn, 'transactionCoding/transactionCode')
         if code not in ('P', 'S'):
             continue
         date_str = txt(txn, 'transactionDate/value')
