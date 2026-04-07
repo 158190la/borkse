@@ -1113,23 +1113,61 @@ def api_insider_ping():
 
 @app.route('/api/insider/debug', methods=['GET'])
 def api_insider_debug():
-    """Diagnóstico: muestra submissions JSON de AAPL."""
-    import time
+    """Diagnóstico: descarga y parsea el XML del primer Form 4 de AAPL."""
+    import time, xml.etree.ElementTree as ET
     t0 = time.time()
     try:
         r = req.get('https://data.sec.gov/submissions/CIK0000320193.json',
                     headers=_SEC_HEADERS, timeout=10)
         d = r.json()
         recent = d.get('filings', {}).get('recent', {})
-        forms  = recent.get('form', [])[:20]
-        dates  = recent.get('filingDate', [])[:20]
-        accs   = recent.get('accessionNumber', [])[:20]
-        docs   = recent.get('primaryDocument', [])[:20]
-        form4s = [{'form': forms[i], 'date': dates[i], 'acc': accs[i], 'doc': docs[i]}
-                  for i in range(len(forms)) if forms[i] == '4']
-        return jsonify({'ok': True, 'status': r.status_code,
-                        'elapsed_s': round(time.time()-t0, 2),
-                        'form4s': form4s[:5]})
+        forms  = recent.get('form', [])
+        accs   = recent.get('accessionNumber', [])
+        docs   = recent.get('primaryDocument', [])
+
+        # Primer Form 4
+        idx = next((i for i, f in enumerate(forms) if f == '4'), None)
+        if idx is None:
+            return jsonify({'ok': False, 'msg': 'no Form 4 found'})
+
+        acc  = accs[idx]
+        xmlf = docs[idx]
+        if '/' in xmlf:
+            xmlf = xmlf.split('/')[-1]
+        nodash = acc.replace('-', '')
+        xml_url = f'https://www.sec.gov/Archives/edgar/data/320193/{nodash}/{xmlf}'
+
+        xr = req.get(xml_url, headers=_SEC_HEADERS_XML, timeout=10)
+        result = {
+            'acc': acc, 'doc_raw': docs[idx], 'doc_clean': xmlf,
+            'xml_url': xml_url, 'xml_status': xr.status_code,
+        }
+
+        if xr.status_code == 200:
+            result['xml_bytes'] = len(xr.content)
+            result['xml_preview'] = xr.content[:500].decode('utf-8', errors='replace')
+            xml_clean = xr.content.replace(b' xmlns=', b' xmlnsIgnore=')
+            try:
+                root = ET.fromstring(xml_clean)
+                codes = []
+                for tbl in ['nonDerivativeTable', 'derivativeTable']:
+                    tbl_el = root.find(tbl)
+                    if tbl_el is not None:
+                        for ttag in ['nonDerivativeTransaction', 'derivativeTransaction']:
+                            for txn in tbl_el.findall(ttag):
+                                cel = txn.find('transactionAmounts/transactionCode')
+                                price_el = txn.find('transactionAmounts/transactionPricePerShare/value')
+                                shares_el = txn.find('transactionAmounts/transactionShares/value')
+                                codes.append({
+                                    'code': cel.text.strip() if cel is not None and cel.text else None,
+                                    'price': price_el.text if price_el is not None else None,
+                                    'shares': shares_el.text if shares_el is not None else None,
+                                })
+                result['transactions'] = codes
+            except Exception as pe:
+                result['parse_error'] = str(pe)
+
+        return jsonify({'ok': True, 'elapsed_s': round(time.time()-t0, 2), **result})
     except Exception as e:
         return jsonify({'ok': False, 'msg': str(e)}), 500
 
