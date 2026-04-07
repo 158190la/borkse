@@ -1094,16 +1094,17 @@ def _process_filing(hit):
 
 def _fetch_rss_filings(days):
     """
-    Obtiene Form 4 recientes del RSS feed de EDGAR (URLs de archivo siempre válidas).
+    Obtiene Form 4 recientes del RSS feed de EDGAR.
     Retorna lista de dicts: {cik, nodash, accession}
     """
-    import xml.etree.ElementTree as ET
+    import xml.etree.ElementTree as ET, re
     from datetime import datetime, timedelta
 
     cutoff = (datetime.utcnow() - timedelta(days=days)).date()
     filings = []
+    seen = set()
 
-    for start in range(0, 100, 40):
+    for start in range(0, 200, 40):
         url = (f'https://www.sec.gov/cgi-bin/browse-edgar'
                f'?action=getcurrent&type=4&dateb=&owner=include'
                f'&count=40&start={start}&output=atom')
@@ -1118,7 +1119,12 @@ def _fetch_rss_filings(days):
                 break
             found_old = False
             for entry in entries:
-                # filing-date
+                # Filtrar: solo Form 4 exacto (título empieza con "4 -")
+                title_el = entry.find('atom:title', ns)
+                if title_el is None or not (title_el.text or '').strip().startswith('4 '):
+                    continue
+
+                # Fecha de filing (elemento SEC con namespace)
                 date_el = entry.find('{https://www.sec.gov/Archives/edgar}filing-date')
                 if date_el is not None and date_el.text:
                     try:
@@ -1128,16 +1134,18 @@ def _fetch_rss_filings(days):
                             break
                     except Exception:
                         pass
-                # link al index
+
                 link_el = entry.find('atom:link', ns)
                 if link_el is None:
                     continue
                 href = link_el.get('href', '')
-                # href: .../edgar/data/{cik}/{nodash}/{accession}-index.htm
-                import re
                 m = re.search(r'/edgar/data/(\d+)/(\w+)/([0-9\-]+)-index\.htm', href)
                 if not m:
                     continue
+                key = m.group(3)  # accession como dedup key
+                if key in seen:
+                    continue
+                seen.add(key)
                 filings.append({'cik': m.group(1), 'nodash': m.group(2), 'accession': m.group(3)})
             if found_old or len(entries) < 40:
                 break
