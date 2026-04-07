@@ -1008,52 +1008,32 @@ def _parse_form4_xml(xml_bytes):
     return trades
 
 def _process_filing(hit):
-    """Procesa un hit de EFTS: index JSON + XML → lista de trades."""
-    import time
+    """Procesa un hit de EFTS: _id tiene formato {accession}:{xml_file}."""
     try:
-        _id = hit.get('_id', '')
-        parts = _id.split('-')
+        raw_id = hit.get('_id', '')
+        # Formato real: "0001493152-26-015387:ownership.xml"
+        if ':' in raw_id:
+            accession, xml_doc = raw_id.split(':', 1)
+        else:
+            return []  # sin xml_doc no podemos hacer nada
+
+        parts = accession.split('-')
         if len(parts) < 3:
             return []
-        cik     = parts[0]
-        nodash  = _id.replace('-', '')
+        cik     = parts[0]          # "0001493152"
+        nodash  = accession.replace('-', '')  # "000149315226015387"
         cik_int = int(cik)
 
-        # 1. Intentar XML directo (nombre más común: {nodash}.xml)
-        xml_content = None
-        direct_url = f'https://www.sec.gov/Archives/edgar/data/{cik_int}/{nodash}/{nodash}.xml'
-        dr = req.get(direct_url, headers=_SEC_HEADERS_XML, timeout=8)
-        if dr.status_code == 200 and b'<ownershipDocument' in dr.content:
-            xml_content = dr.content
-        else:
-            # 2. Fallback: index JSON para encontrar el XML real
-            index_url = f'https://www.sec.gov/Archives/edgar/data/{cik_int}/{nodash}/{_id}-index.json'
-            ir = req.get(index_url, headers=_SEC_HEADERS, timeout=8)
-            if ir.status_code != 200:
-                return []
-            idx = ir.json()
-            xml_doc = None
-            for doc in idx.get('documents', []):
-                if doc.get('type') == '4' and doc.get('document', '').lower().endswith('.xml'):
-                    xml_doc = doc.get('document')
-                    break
-            if not xml_doc:
-                return []
-            xr = req.get(
-                f'https://www.sec.gov/Archives/edgar/data/{cik_int}/{nodash}/{xml_doc}',
-                headers=_SEC_HEADERS_XML, timeout=8
-            )
-            if xr.status_code != 200:
-                return []
-            xml_content = xr.content
+        xml_url = f'https://www.sec.gov/Archives/edgar/data/{cik_int}/{nodash}/{xml_doc}'
+        xr = req.get(xml_url, headers=_SEC_HEADERS_XML, timeout=10)
+        if xr.status_code != 200:
+            return []
 
-        trades = _parse_form4_xml(xml_content)
+        trades = _parse_form4_xml(xr.content)
         if not trades:
             return []
 
-        # 3. Sector del issuer (cache, no bloquea)
-        issuer_cik = trades[0].get('issuer_cik') or cik
-        sector = _get_cik_sector(str(issuer_cik).zfill(10))
+        sector = _get_cik_sector(str(trades[0].get('issuer_cik') or cik).zfill(10))
         for t in trades:
             t['sector'] = sector
             t.pop('issuer_cik', None)
