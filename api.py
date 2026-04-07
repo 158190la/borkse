@@ -1043,7 +1043,7 @@ def _process_filing(hit):
 
 
 def _fetch_insider_data(days):
-    """Descarga Form 4 filings de SEC EDGAR con 6 workers concurrentes."""
+    """Descarga Form 4 filings de SEC EDGAR con 8 workers concurrentes."""
     import concurrent.futures
     from datetime import datetime, timedelta
 
@@ -1052,27 +1052,33 @@ def _fetch_insider_data(days):
     start_s  = start_dt.strftime('%Y-%m-%d')
     end_s    = end_dt.strftime('%Y-%m-%d')
 
-    # ── 1. EFTS: obtener hasta 20 hits recientes ──────────────────────────────
-    url = (
-        f'https://efts.sec.gov/LATEST/search-index?q=&forms=4'
-        f'&dateRange=custom&startdt={start_s}&enddt={end_s}&from=0&size=20'
-    )
-    try:
-        r = req.get(url, headers=_SEC_HEADERS, timeout=15)
-        if r.status_code != 200:
-            return []
-        hits = r.json().get('hits', {}).get('hits', [])
-    except Exception:
+    # ── 1. EFTS: 5 páginas × 20 = hasta 100 hits ─────────────────────────────
+    hits_all = []
+    for offset in range(0, 100, 20):
+        try:
+            url = (
+                f'https://efts.sec.gov/LATEST/search-index?q=&forms=4'
+                f'&dateRange=custom&startdt={start_s}&enddt={end_s}'
+                f'&from={offset}&size=20'
+            )
+            r = req.get(url, headers=_SEC_HEADERS, timeout=12)
+            if r.status_code != 200:
+                break
+            page_hits = r.json().get('hits', {}).get('hits', [])
+            hits_all.extend(page_hits)
+            if len(page_hits) < 20:
+                break
+        except Exception:
+            break
+
+    if not hits_all:
         return []
 
-    if not hits:
-        return []
-
-    # ── 2. Procesar en paralelo (6 workers, sin sleep artificial) ─────────────
+    # ── 2. Procesar en paralelo (8 workers) ──────────────────────────────────
     all_trades = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
-        futures = [pool.submit(_process_filing, h) for h in hits]
-        for fut in concurrent.futures.as_completed(futures, timeout=25):
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        futures = [pool.submit(_process_filing, h) for h in hits_all]
+        for fut in concurrent.futures.as_completed(futures, timeout=30):
             try:
                 all_trades.extend(fut.result())
             except Exception:
@@ -1091,23 +1097,30 @@ def api_insider_ping():
         end_s   = datetime.utcnow().strftime('%Y-%m-%d')
         start_s = (datetime.utcnow() - timedelta(days=14)).strftime('%Y-%m-%d')
         url = (f'https://efts.sec.gov/LATEST/search-index?q=&forms=4'
-               f'&dateRange=custom&startdt={start_s}&enddt={end_s}&from=0&size=3')
+               f'&dateRange=custom&startdt={start_s}&enddt={end_s}&from=0&size=30')
         r = req.get(url, headers=_SEC_HEADERS, timeout=10)
         d = r.json()
         hits = d.get('hits', {}).get('hits', [])
+        # Procesar 30 filings en paralelo para el diagnóstico
+        import concurrent.futures as cf
         sample_trades = []
         filings_with_trades = 0
-        for h in hits[:10]:
-            t = _process_filing(h)
-            if t:
-                filings_with_trades += 1
-                if not sample_trades:
-                    sample_trades = t[:3]
+        with cf.ThreadPoolExecutor(max_workers=8) as pool:
+            futs = [pool.submit(_process_filing, h) for h in hits]
+            for fut in cf.as_completed(futs, timeout=20):
+                try:
+                    t = fut.result()
+                    if t:
+                        filings_with_trades += 1
+                        if not sample_trades:
+                            sample_trades = t[:3]
+                except Exception:
+                    pass
         return jsonify({
             'ok': True,
             'efts_status': r.status_code,
             'total': d.get('hits', {}).get('total', {}),
-            'filings_checked': min(10, len(hits)),
+            'filings_checked': len(hits),
             'filings_with_trades': filings_with_trades,
             'sample_trades': sample_trades,
             'elapsed_s': round(time.time() - t0, 2),
