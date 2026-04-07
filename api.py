@@ -1242,63 +1242,46 @@ def api_insider_ping():
 
 @app.route('/api/insider/debug', methods=['GET'])
 def api_insider_debug():
-    """Diagnóstico: muestra códigos de transacción de los primeros 15 filings RSS."""
+    """Diagnóstico: muestra hrefs brutos del RSS Atom feed de EDGAR."""
     import time, xml.etree.ElementTree as ET
     t0 = time.time()
     try:
-        filings = _fetch_rss_filings(30)[:15]
-        results = []
-        for f in filings:
-            cik_int = int(f['cik'])
-            nodash  = f['nodash']
-            acc     = f['accession']
-            info    = {'accession': acc, 'cik': f['cik']}
+        url = ('https://www.sec.gov/cgi-bin/browse-edgar'
+               '?action=getcurrent&type=4&dateb=&owner=include&count=10&start=0&output=atom')
+        r = req.get(url, headers={**_SEC_HEADERS, 'Accept': 'application/atom+xml'}, timeout=15)
+        root = ET.fromstring(r.content)
+        ns = {'atom': 'http://www.w3.org/2005/Atom'}
 
-            ir = _sec_get_with_retry(
-                f'https://www.sec.gov/Archives/edgar/data/{cik_int}/{nodash}/{acc}-index.json',
-                _SEC_HEADERS)
-            info['index_status'] = ir.status_code
-            if ir.status_code != 200:
-                results.append(info)
-                continue
+        entries_raw = []
+        for entry in root.findall('atom:entry', ns)[:10]:
+            info = {}
+            # title
+            t = entry.find('atom:title', ns)
+            info['title'] = t.text if t is not None else ''
+            # all links
+            info['links'] = [l.get('href','') for l in entry.findall('atom:link', ns)]
+            # all non-atom elements (SEC namespace)
+            for child in entry:
+                if child.tag.startswith('{http://www.w3.org/2005/Atom}'):
+                    continue
+                tag = child.tag.split('}')[-1] if '}' in child.tag else child.tag
+                info[tag] = child.text
+            entries_raw.append(info)
 
-            xml_doc = None
-            for doc in ir.json().get('documents', []):
-                if doc.get('type') == '4' and doc.get('document', '').lower().endswith('.xml'):
-                    xml_doc = doc.get('document')
-                    break
-            info['xml_doc'] = xml_doc
-            if not xml_doc:
-                results.append(info)
-                continue
+        # también probar una URL de index con el accession de primer entry
+        test_result = None
+        if entries_raw:
+            acc = entries_raw[0].get('accession-nunber') or entries_raw[0].get('accession_number') or ''
+            if acc:
+                acc_clean = acc.strip().replace('\n','')
+                cik_from_acc = int(acc_clean.split('-')[0])
+                nodash = acc_clean.replace('-','')
+                test_url = f'https://www.sec.gov/Archives/edgar/data/{cik_from_acc}/{nodash}/{acc_clean}-index.json'
+                tr = _sec_get_with_retry(test_url, _SEC_HEADERS)
+                test_result = {'url': test_url, 'status': tr.status_code}
 
-            xr = _sec_get_with_retry(
-                f'https://www.sec.gov/Archives/edgar/data/{cik_int}/{nodash}/{xml_doc}',
-                _SEC_HEADERS_XML)
-            info['xml_status'] = xr.status_code
-            if xr.status_code != 200:
-                results.append(info)
-                continue
-
-            info['xml_bytes'] = len(xr.content)
-            xml_clean = xr.content.replace(b' xmlns=', b' xmlnsIgnore=')
-            try:
-                root = ET.fromstring(xml_clean)
-                codes = []
-                for tbl in ['nonDerivativeTable', 'derivativeTable']:
-                    tbl_el = root.find(tbl)
-                    if tbl_el is not None:
-                        for ttag in ['nonDerivativeTransaction', 'derivativeTransaction']:
-                            for txn in tbl_el.findall(ttag):
-                                cel = txn.find('transactionAmounts/transactionCode')
-                                if cel is not None and cel.text:
-                                    codes.append(cel.text.strip())
-                info['codes'] = codes
-                ticker_el = root.find('issuer/issuerTradingSymbol')
-                info['ticker'] = ticker_el.text.strip() if ticker_el is not None and ticker_el.text else ''
-            except Exception as pe:
-                info['parse_error'] = str(pe)
-            results.append(info)
+        return jsonify({'ok': True, 'elapsed_s': round(time.time()-t0, 2),
+                        'entries': entries_raw, 'test_index': test_result})
 
         return jsonify({'ok': True, 'elapsed_s': round(time.time()-t0,2), 'filings': results})
     except Exception as e:
