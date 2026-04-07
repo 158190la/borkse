@@ -1008,7 +1008,107 @@ def _parse_form4_xml(xml_bytes):
         })
     return trades
 
-# ── Watchlist S&P 500: (ticker, CIK) ─────────────────────────────────────────
+# ── Cobertura amplia: EFTS search (mercado completo) ─────────────────────────
+
+def _fetch_efts_filings(days):
+    """
+    Obtiene Form 4 del mercado completo vía EFTS.
+    Busca filings de hasta ayer (no hoy) para evitar 404 por procesamiento pendiente.
+    Retorna lista de dicts con todos los campos necesarios para construir la URL.
+    """
+    from datetime import datetime, timedelta
+    end_dt   = datetime.utcnow() - timedelta(days=1)   # hasta ayer
+    start_dt = end_dt - timedelta(days=days)
+    start_s  = start_dt.strftime('%Y-%m-%d')
+    end_s    = end_dt.strftime('%Y-%m-%d')
+
+    hits_all = []
+    for offset in range(0, 200, 40):
+        try:
+            url = (f'https://efts.sec.gov/LATEST/search-index?q=&forms=4'
+                   f'&dateRange=custom&startdt={start_s}&enddt={end_s}'
+                   f'&from={offset}&size=40')
+            r = req.get(url, headers=_SEC_HEADERS, timeout=12)
+            if r.status_code != 200:
+                break
+            hits = r.json().get('hits', {}).get('hits', [])
+            hits_all.extend(hits)
+            if len(hits) < 40:
+                break
+        except Exception:
+            break
+    return hits_all
+
+
+def _process_efts_hit(hit):
+    """Procesa un hit de EFTS → lista de trades P/S."""
+    import time
+    try:
+        raw_id = hit.get('_id', '')
+        if ':' not in raw_id:
+            return []
+        accession, xml_doc = raw_id.split(':', 1)
+        if '/' in xml_doc:
+            xml_doc = xml_doc.split('/')[-1]
+        parts   = accession.split('-')
+        cik_int = int(parts[0])
+        nodash  = accession.replace('-', '')
+
+        time.sleep(0.12)
+        xr = req.get(
+            f'https://www.sec.gov/Archives/edgar/data/{cik_int}/{nodash}/{xml_doc}',
+            headers=_SEC_HEADERS_XML, timeout=10)
+        if xr.status_code != 200:
+            return []
+
+        trades = _parse_form4_xml(xr.content)
+        if not trades:
+            return []
+        sector = _get_cik_sector(str(trades[0].get('issuer_cik') or parts[0]).zfill(10))
+        for t in trades:
+            t['sector'] = sector
+            t.pop('issuer_cik', None)
+        return trades
+    except Exception:
+        return []
+
+
+def _fetch_insider_data(days):
+    """
+    Descarga Form 4 del mercado completo vía EFTS (hasta ayer),
+    con fallback a watchlist S&P 500 si EFTS no retorna datos.
+    """
+    import concurrent.futures
+
+    hits = _fetch_efts_filings(days)
+
+    if hits:
+        all_trades = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+            futs = [pool.submit(_process_efts_hit, h) for h in hits]
+            for fut in concurrent.futures.as_completed(futs, timeout=50):
+                try:
+                    all_trades.extend(fut.result())
+                except Exception:
+                    pass
+        if all_trades:
+            return all_trades
+
+    # Fallback: watchlist S&P 500
+    from datetime import datetime, timedelta
+    cutoff = (datetime.utcnow() - timedelta(days=days)).date()
+    all_trades = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
+        futs = {pool.submit(_fetch_company_form4, tk, cik, cutoff): tk
+                for tk, cik in _WATCHLIST}
+        for fut in concurrent.futures.as_completed(futs, timeout=50):
+            try:
+                all_trades.extend(fut.result())
+            except Exception:
+                pass
+    return all_trades
+
+
 _WATCHLIST = [
     ('AAPL',320193),  ('MSFT',789019),  ('NVDA',1045810), ('AMZN',1018724),
     ('GOOGL',1652044),('META',1326801), ('TSLA',1318605), ('BRK',1067983),
