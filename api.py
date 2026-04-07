@@ -1092,44 +1092,114 @@ def _process_filing(hit):
         return []
 
 
-def _fetch_insider_data(days):
-    """Descarga Form 4 filings de SEC EDGAR con 8 workers concurrentes."""
-    import concurrent.futures
+def _fetch_rss_filings(days):
+    """
+    Obtiene Form 4 recientes del RSS feed de EDGAR (URLs de archivo siempre válidas).
+    Retorna lista de dicts: {cik, nodash, accession}
+    """
+    import xml.etree.ElementTree as ET
     from datetime import datetime, timedelta
 
-    end_dt   = datetime.utcnow()
-    start_dt = end_dt - timedelta(days=days)
-    start_s  = start_dt.strftime('%Y-%m-%d')
-    end_s    = end_dt.strftime('%Y-%m-%d')
+    cutoff = (datetime.utcnow() - timedelta(days=days)).date()
+    filings = []
 
-    # ── 1. EFTS: 3 páginas × 20 = hasta 60 hits ──────────────────────────────
-    # 60 requests a 7 req/s = ~9s + overhead → seguro bajo timeout de Railway
-    hits_all = []
-    for offset in range(0, 60, 20):
+    for start in range(0, 100, 40):
+        url = (f'https://www.sec.gov/cgi-bin/browse-edgar'
+               f'?action=getcurrent&type=4&dateb=&owner=include'
+               f'&count=40&start={start}&output=atom')
         try:
-            url = (
-                f'https://efts.sec.gov/LATEST/search-index?q=&forms=4'
-                f'&dateRange=custom&startdt={start_s}&enddt={end_s}'
-                f'&from={offset}&size=20'
-            )
-            r = req.get(url, headers=_SEC_HEADERS, timeout=12)
+            r = req.get(url, headers={**_SEC_HEADERS, 'Accept': 'application/atom+xml'}, timeout=15)
             if r.status_code != 200:
                 break
-            page_hits = r.json().get('hits', {}).get('hits', [])
-            hits_all.extend(page_hits)
-            if len(page_hits) < 20:
+            root = ET.fromstring(r.content)
+            ns = {'atom': 'http://www.w3.org/2005/Atom'}
+            entries = root.findall('atom:entry', ns)
+            if not entries:
+                break
+            found_old = False
+            for entry in entries:
+                # filing-date
+                date_el = entry.find('{https://www.sec.gov/Archives/edgar}filing-date')
+                if date_el is not None and date_el.text:
+                    try:
+                        fdate = datetime.strptime(date_el.text.strip(), '%Y-%m-%d').date()
+                        if fdate < cutoff:
+                            found_old = True
+                            break
+                    except Exception:
+                        pass
+                # link al index
+                link_el = entry.find('atom:link', ns)
+                if link_el is None:
+                    continue
+                href = link_el.get('href', '')
+                # href: .../edgar/data/{cik}/{nodash}/{accession}-index.htm
+                import re
+                m = re.search(r'/edgar/data/(\d+)/(\w+)/([0-9\-]+)-index\.htm', href)
+                if not m:
+                    continue
+                filings.append({'cik': m.group(1), 'nodash': m.group(2), 'accession': m.group(3)})
+            if found_old or len(entries) < 40:
                 break
         except Exception:
             break
 
-    if not hits_all:
+    return filings
+
+
+def _process_filing_by_index(filing):
+    """Descarga index JSON → XML → trades para un filing."""
+    try:
+        cik     = filing['cik']
+        nodash  = filing['nodash']
+        accession = filing['accession']
+        cik_int = int(cik)
+
+        index_url = f'https://www.sec.gov/Archives/edgar/data/{cik_int}/{nodash}/{accession}-index.json'
+        ir = _sec_get_with_retry(index_url, _SEC_HEADERS)
+        if ir.status_code != 200:
+            return []
+
+        xml_doc = None
+        for doc in ir.json().get('documents', []):
+            if doc.get('type') == '4' and doc.get('document', '').lower().endswith('.xml'):
+                xml_doc = doc.get('document')
+                break
+        if not xml_doc:
+            return []
+
+        xr = _sec_get_with_retry(
+            f'https://www.sec.gov/Archives/edgar/data/{cik_int}/{nodash}/{xml_doc}',
+            _SEC_HEADERS_XML
+        )
+        if xr.status_code != 200:
+            return []
+
+        trades = _parse_form4_xml(xr.content)
+        if not trades:
+            return []
+
+        sector = _get_cik_sector(str(trades[0].get('issuer_cik') or cik).zfill(10))
+        for t in trades:
+            t['sector'] = sector
+            t.pop('issuer_cik', None)
+        return trades
+    except Exception:
         return []
 
-    # ── 2. Procesar en paralelo (8 workers) ──────────────────────────────────
+
+def _fetch_insider_data(days):
+    """Descarga Form 4 del RSS feed de EDGAR + procesa con 6 workers."""
+    import concurrent.futures
+
+    filings = _fetch_rss_filings(days)
+    if not filings:
+        return []
+
     all_trades = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
-        futures = [pool.submit(_process_filing, h) for h in hits_all]
-        for fut in concurrent.futures.as_completed(futures, timeout=30):
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+        futures = [pool.submit(_process_filing_by_index, f) for f in filings]
+        for fut in concurrent.futures.as_completed(futures, timeout=50):
             try:
                 all_trades.extend(fut.result())
             except Exception:
@@ -1140,25 +1210,16 @@ def _fetch_insider_data(days):
 
 @app.route('/api/insider/ping', methods=['GET'])
 def api_insider_ping():
-    """Diagnóstico: verifica EFTS + descarga primer filing completo."""
-    import time
+    """Diagnóstico: prueba RSS feed + primer filing procesado."""
+    import time, concurrent.futures as cf
     t0 = time.time()
     try:
-        from datetime import datetime, timedelta
-        end_s   = datetime.utcnow().strftime('%Y-%m-%d')
-        start_s = (datetime.utcnow() - timedelta(days=14)).strftime('%Y-%m-%d')
-        url = (f'https://efts.sec.gov/LATEST/search-index?q=&forms=4'
-               f'&dateRange=custom&startdt={start_s}&enddt={end_s}&from=0&size=30')
-        r = req.get(url, headers=_SEC_HEADERS, timeout=10)
-        d = r.json()
-        hits = d.get('hits', {}).get('hits', [])
-        # Procesar 30 filings en paralelo para el diagnóstico
-        import concurrent.futures as cf
+        filings = _fetch_rss_filings(7)
         sample_trades = []
         filings_with_trades = 0
-        with cf.ThreadPoolExecutor(max_workers=8) as pool:
-            futs = [pool.submit(_process_filing, h) for h in hits]
-            for fut in cf.as_completed(futs, timeout=20):
+        with cf.ThreadPoolExecutor(max_workers=6) as pool:
+            futs = [pool.submit(_process_filing_by_index, f) for f in filings[:20]]
+            for fut in cf.as_completed(futs, timeout=25):
                 try:
                     t = fut.result()
                     if t:
@@ -1169,9 +1230,8 @@ def api_insider_ping():
                     pass
         return jsonify({
             'ok': True,
-            'efts_status': r.status_code,
-            'total': d.get('hits', {}).get('total', {}),
-            'filings_checked': len(hits),
+            'rss_filings_found': len(filings),
+            'filings_checked': min(20, len(filings)),
             'filings_with_trades': filings_with_trades,
             'sample_trades': sample_trades,
             'elapsed_s': round(time.time() - t0, 2),
