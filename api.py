@@ -1053,6 +1053,9 @@ def _fetch_company_form4(ticker, cik, cutoff):
 
             acc    = accs[i].replace('-', '')
             xmlf   = docs[i] if i < len(docs) else ''
+            # "xslF345X06/form4.xml" → "form4.xml" (prefijo XSLT, no es subdirectorio)
+            if '/' in xmlf:
+                xmlf = xmlf.split('/')[-1]
             if not xmlf or not xmlf.lower().endswith('.xml'):
                 continue
 
