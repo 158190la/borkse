@@ -1096,14 +1096,20 @@ def api_insider_ping():
         d = r.json()
         hits = d.get('hits', {}).get('hits', [])
         sample_trades = []
-        if hits:
-            sample_trades = _process_filing(hits[0])
+        filings_with_trades = 0
+        for h in hits[:10]:
+            t = _process_filing(h)
+            if t:
+                filings_with_trades += 1
+                if not sample_trades:
+                    sample_trades = t[:3]
         return jsonify({
             'ok': True,
             'efts_status': r.status_code,
-            'efts_hits': [h.get('_id') for h in hits],
             'total': d.get('hits', {}).get('total', {}),
-            'sample_trades': sample_trades[:3],
+            'filings_checked': min(10, len(hits)),
+            'filings_with_trades': filings_with_trades,
+            'sample_trades': sample_trades,
             'elapsed_s': round(time.time() - t0, 2),
         })
     except Exception as e:
