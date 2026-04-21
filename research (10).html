@@ -863,6 +863,12 @@ input:checked + .db-tog-slider:before { transform:translateX(17px); background:v
       <button class="nav-item" data-page="scraper" onclick="showPage('scraper')">
         <span class="icon">↻</span> Actualizar Datos
       </button>
+      <button class="nav-item" data-page="rotation" onclick="showPage('rotation')">
+        <span class="icon">◆</span> Rotation
+      </button>
+      <button class="nav-item" data-page="tasas" onclick="showPage('tasas')">
+        <span class="icon">◎</span> Tasas ARG
+      </button>
     </div>
 
     <div class="nav-right">
@@ -3269,6 +3275,312 @@ if __name__ == '__main__':
     </div><!-- /ins-wrap -->
     </div><!-- /page-insider -->
 
+    <!-- ══════════════════════════════════════════════════════
+         ROTATION INDICATOR
+    ══════════════════════════════════════════════════════ -->
+    <div id="page-rotation" class="page">
+    <style>
+    #page-rotation { --rot-navy:#0a1628; --rot-gold:#c9a84c; --col-fija:#4a90d9; --col-cer:#e8a838; --col-dolar:#5db45e; --col-mm:#9b7fd4; }
+    .rot-wrap { padding:0; font-family:var(--sans); }
+    .rot-topbar { display:flex; align-items:center; justify-content:space-between; padding:14px 28px; border-bottom:1px solid var(--bdr); background:var(--surf); flex-wrap:wrap; gap:10px; }
+    .rot-topbar h1 { font-family:var(--serif); font-size:20px; font-style:italic; margin:0; }
+    .rot-topbar-meta { display:flex; align-items:center; gap:12px; }
+    .rot-clock { font-family:var(--mono); font-size:11px; color:var(--txt3); }
+    .rot-refresh-btn { background:var(--acc); color:#fff; border:none; padding:6px 14px; border-radius:4px; cursor:pointer; font-size:12px; }
+    .rot-refresh-btn:hover { opacity:.85; }
+    .rot-body { padding:20px 28px; display:flex; flex-direction:column; gap:20px; }
+    /* Alloc bar */
+    .rot-alloc-section { background:var(--surf); border:1px solid var(--bdr); border-radius:8px; padding:16px 20px; }
+    .rot-alloc-title { font-size:11px; font-family:var(--mono); color:var(--txt3); text-transform:uppercase; letter-spacing:.08em; margin-bottom:12px; }
+    .rot-alloc-bar { display:flex; height:32px; border-radius:6px; overflow:hidden; gap:2px; }
+    .rot-seg { display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:600; color:#fff; transition:flex .5s ease; min-width:0; overflow:hidden; }
+    .rot-seg-label { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding:0 6px; }
+    .rot-seg-fija  { background:var(--col-fija); }
+    .rot-seg-cer   { background:var(--col-cer); }
+    .rot-seg-dolar { background:var(--col-dolar); }
+    .rot-seg-mm    { background:var(--col-mm); }
+    .rot-alloc-legend { display:flex; gap:16px; margin-top:10px; flex-wrap:wrap; }
+    .rot-legend-item { display:flex; align-items:center; gap:6px; font-size:12px; }
+    .rot-legend-dot { width:10px; height:10px; border-radius:50%; flex-shrink:0; }
+    .rot-legend-pct { font-family:var(--mono); font-weight:600; }
+    .rot-legend-delta { font-family:var(--mono); font-size:10px; color:var(--txt3); }
+    /* Score cards */
+    .rot-scores-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; }
+    @media(max-width:800px){ .rot-scores-grid { grid-template-columns:repeat(2,1fr); } }
+    .rot-score-card { background:var(--surf); border:1px solid var(--bdr); border-radius:8px; padding:16px; position:relative; overflow:hidden; }
+    .rot-score-card::before { content:''; position:absolute; top:0; left:0; right:0; height:3px; }
+    .rot-score-card.fija::before  { background:var(--col-fija); }
+    .rot-score-card.cer::before   { background:var(--col-cer); }
+    .rot-score-card.dolar::before { background:var(--col-dolar); }
+    .rot-score-card.mm::before    { background:var(--col-mm); }
+    .rot-card-label { font-size:11px; font-family:var(--mono); color:var(--txt3); text-transform:uppercase; letter-spacing:.08em; margin-bottom:8px; }
+    .rot-card-score { font-size:32px; font-weight:700; font-family:var(--mono); line-height:1; }
+    .rot-card-signal { font-size:11px; font-weight:600; margin-top:6px; padding:2px 8px; border-radius:3px; display:inline-block; }
+    .rot-sig-strong-buy { background:#1a4a1a; color:#5db45e; }
+    .rot-sig-buy        { background:#1a3a1a; color:#7fc87f; }
+    .rot-sig-neutral    { background:#2a2a2a; color:#999; }
+    .rot-sig-reduce     { background:#3a2a1a; color:#e8a838; }
+    .rot-sig-avoid      { background:#3a1a1a; color:#e05; }
+    .rot-card-alloc { font-size:18px; font-family:var(--mono); font-weight:600; color:var(--txt2); margin-top:4px; }
+    /* Reason grid */
+    .rot-reason-section { background:var(--surf); border:1px solid var(--bdr); border-radius:8px; padding:16px 20px; }
+    .rot-reason-title { font-size:11px; font-family:var(--mono); color:var(--txt3); text-transform:uppercase; letter-spacing:.08em; margin-bottom:12px; }
+    .rot-factors-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+    @media(max-width:900px){ .rot-factors-grid { grid-template-columns:repeat(2,1fr); } }
+    @media(max-width:600px){ .rot-factors-grid { grid-template-columns:1fr; } }
+    .rot-factor { display:flex; align-items:flex-start; gap:10px; padding:10px 12px; background:var(--bg); border-radius:6px; border:1px solid var(--bdr); }
+    .rot-factor-icon { font-size:18px; line-height:1; flex-shrink:0; }
+    .rot-factor-body { min-width:0; }
+    .rot-factor-label { font-size:10px; color:var(--txt3); font-family:var(--mono); text-transform:uppercase; letter-spacing:.06em; }
+    .rot-factor-val { font-size:13px; font-weight:600; font-family:var(--mono); color:var(--txt); }
+    .rot-factor-sub { font-size:10px; color:var(--txt3); margin-top:2px; }
+    /* Two-col */
+    .rot-two-col { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+    @media(max-width:768px){ .rot-two-col { grid-template-columns:1fr; } }
+    .rot-panel { background:var(--surf); border:1px solid var(--bdr); border-radius:8px; padding:16px 20px; }
+    .rot-panel h3 { font-size:13px; font-weight:600; margin:0 0 14px 0; color:var(--txt2); }
+    .rot-inp-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px 12px; margin-bottom:12px; }
+    .rot-inp-grid label { font-size:11px; color:var(--txt3); display:flex; align-items:center; gap:4px; }
+    .rot-inp-grid input, .rot-inp-grid select { width:100%; padding:4px 8px; background:var(--bg); border:1px solid var(--bdr); border-radius:4px; color:var(--txt); font-family:var(--mono); font-size:12px; box-sizing:border-box; }
+    .rot-inp-grid input[readonly] { opacity:.6; }
+    .rot-src-badge { font-size:9px; padding:1px 4px; border-radius:2px; background:var(--acc); color:#fff; opacity:.8; }
+    .rot-nota { width:100%; padding:6px 8px; background:var(--bg); border:1px solid var(--bdr); border-radius:4px; color:var(--txt); font-size:12px; resize:vertical; box-sizing:border-box; margin-bottom:10px; }
+    .rot-save-btn { background:var(--acc); color:#fff; border:none; padding:7px 18px; border-radius:4px; cursor:pointer; font-size:12px; }
+    .rot-save-btn:hover { opacity:.85; }
+    /* History */
+    .rot-history-list { max-height:280px; overflow-y:auto; display:flex; flex-direction:column; gap:6px; margin-top:10px; }
+    .rot-snap { background:var(--bg); border:1px solid var(--bdr); border-radius:6px; padding:10px 12px; position:relative; }
+    .rot-snap-date { font-size:10px; color:var(--txt3); font-family:var(--mono); }
+    .rot-snap-alloc { display:flex; gap:6px; margin-top:4px; flex-wrap:wrap; }
+    .rot-snap-pill { font-size:10px; font-family:var(--mono); padding:2px 6px; border-radius:3px; font-weight:600; }
+    .rot-snap-del { position:absolute; top:6px; right:8px; background:none; border:none; color:var(--txt3); cursor:pointer; font-size:13px; }
+    .rot-snap-del:hover { color:var(--red,#e05); }
+    .rot-snap-nota { font-size:11px; color:var(--txt3); margin-top:4px; font-style:italic; }
+    /* Mini chart SVG */
+    #rot-mini-chart { display:block; margin-bottom:8px; }
+    .rot-no-data { text-align:center; padding:40px; color:var(--txt3); font-size:13px; }
+    </style>
+    <div class="rot-wrap">
+      <div class="rot-topbar">
+        <h1>◆ Rotation Indicator</h1>
+        <div class="rot-topbar-meta">
+          <span class="rot-clock" id="rot-clock">—</span>
+          <button class="rot-refresh-btn" onclick="window.rotRefresh()">↻ Actualizar</button>
+        </div>
+      </div>
+      <div class="rot-body">
+        <!-- Allocation bar -->
+        <div class="rot-alloc-section">
+          <div class="rot-alloc-title">Asignación sugerida</div>
+          <div class="rot-alloc-bar" id="rot-alloc-bar">
+            <div class="rot-seg rot-seg-fija" style="flex:25"><span class="rot-seg-label">Fija 25%</span></div>
+            <div class="rot-seg rot-seg-cer"  style="flex:25"><span class="rot-seg-label">CER 25%</span></div>
+            <div class="rot-seg rot-seg-dolar" style="flex:25"><span class="rot-seg-label">Dólar 25%</span></div>
+            <div class="rot-seg rot-seg-mm"   style="flex:25"><span class="rot-seg-label">MM 25%</span></div>
+          </div>
+          <div class="rot-alloc-legend" id="rot-alloc-legend"></div>
+        </div>
+        <!-- Score cards -->
+        <div class="rot-scores-grid" id="rot-score-cards">
+          <div class="rot-score-card fija"><div class="rot-card-label">Tasa Fija</div><div class="rot-card-score">—</div><div class="rot-card-signal rot-sig-neutral">sin datos</div><div class="rot-card-alloc">—%</div></div>
+          <div class="rot-score-card cer"><div class="rot-card-label">CER / Inflación</div><div class="rot-card-score">—</div><div class="rot-card-signal rot-sig-neutral">sin datos</div><div class="rot-card-alloc">—%</div></div>
+          <div class="rot-score-card dolar"><div class="rot-card-label">Dólar</div><div class="rot-card-score">—</div><div class="rot-card-signal rot-sig-neutral">sin datos</div><div class="rot-card-alloc">—%</div></div>
+          <div class="rot-score-card mm"><div class="rot-card-label">Liquidez / MM</div><div class="rot-card-score">—</div><div class="rot-card-signal rot-sig-neutral">sin datos</div><div class="rot-card-alloc">—%</div></div>
+        </div>
+        <!-- Factor reasoning -->
+        <div class="rot-reason-section">
+          <div class="rot-reason-title">Factores del mercado</div>
+          <div class="rot-factors-grid" id="rot-factors-grid">
+            <div class="rot-factor"><div class="rot-factor-icon">💱</div><div class="rot-factor-body"><div class="rot-factor-label">MEP</div><div class="rot-factor-val" id="rf-mep">—</div><div class="rot-factor-sub" id="rf-brecha">brecha: —</div></div></div>
+            <div class="rot-factor"><div class="rot-factor-icon">💵</div><div class="rot-factor-body"><div class="rot-factor-label">CCL</div><div class="rot-factor-val" id="rf-ccl">—</div><div class="rot-factor-sub">dólar financiero</div></div></div>
+            <div class="rot-factor"><div class="rot-factor-icon">📈</div><div class="rot-factor-body"><div class="rot-factor-label">TEM LECAP</div><div class="rot-factor-val" id="rf-tem">—</div><div class="rot-factor-sub" id="rf-tem-real">TEM real: —</div></div></div>
+            <div class="rot-factor"><div class="rot-factor-icon">📊</div><div class="rot-factor-body"><div class="rot-factor-label">TIR CER Real</div><div class="rot-factor-val" id="rf-cer">—</div><div class="rot-factor-sub">anual</div></div></div>
+            <div class="rot-factor"><div class="rot-factor-icon">🌡</div><div class="rot-factor-body"><div class="rot-factor-label">IPC mensual</div><div class="rot-factor-val" id="rf-infl">—</div><div class="rot-factor-sub" id="rf-infldir">—</div></div></div>
+            <div class="rot-factor"><div class="rot-factor-icon">🌍</div><div class="rot-factor-body"><div class="rot-factor-label">EMBI</div><div class="rot-factor-val" id="rf-embi">—</div><div class="rot-factor-sub" id="rf-embi-sub">riesgo país</div></div></div>
+            <div class="rot-factor"><div class="rot-factor-icon">💰</div><div class="rot-factor-body"><div class="rot-factor-label">M2 var 30d</div><div class="rot-factor-val" id="rf-m2">—</div><div class="rot-factor-sub">expansión monetaria</div></div></div>
+            <div class="rot-factor"><div class="rot-factor-icon">🏦</div><div class="rot-factor-body"><div class="rot-factor-label">Reservas var 30d</div><div class="rot-factor-val" id="rf-res">—</div><div class="rot-factor-sub" id="rf-res-sub">BCRA</div></div></div>
+            <div class="rot-factor"><div class="rot-factor-icon">🏛</div><div class="rot-factor-body"><div class="rot-factor-label">TC Oficial</div><div class="rot-factor-val" id="rf-oficial">—</div><div class="rot-factor-sub">BCRA mayorista</div></div></div>
+          </div>
+        </div>
+        <!-- Two-col: inputs + history -->
+        <div class="rot-two-col">
+          <div class="rot-panel">
+            <h3>Parámetros manuales</h3>
+            <div class="rot-inp-grid">
+              <label>MEP <span class="rot-src-badge" id="rot-mep-src">auto</span></label>
+              <input id="rot-mep" type="number" step="1" placeholder="ej. 1250" oninput="window.rotComputeAndRender&&window.rotComputeAndRender()">
+              <label>CCL <span class="rot-src-badge" id="rot-ccl-src">auto</span></label>
+              <input id="rot-ccl" type="number" step="1" placeholder="ej. 1280" oninput="window.rotComputeAndRender&&window.rotComputeAndRender()">
+              <label>Oficial</label>
+              <input id="rot-oficial" type="number" step="0.01" readonly>
+              <label>Brecha MEP/Of</label>
+              <input id="rot-brecha" type="text" readonly>
+              <label>TEM LECAP (%)</label>
+              <input id="rot-tem" type="number" step="0.01" placeholder="auto" oninput="window.rotComputeAndRender&&window.rotComputeAndRender()">
+              <label>TIR CER real (%)</label>
+              <input id="rot-cer" type="number" step="0.01" placeholder="auto" oninput="window.rotComputeAndRender&&window.rotComputeAndRender()">
+              <label>IPC mensual (%)</label>
+              <input id="rot-infl" type="number" step="0.01" placeholder="auto" oninput="window.rotComputeAndRender&&window.rotComputeAndRender()">
+              <label>EMBI (bps)</label>
+              <input id="rot-embi" type="number" placeholder="auto" oninput="window.rotComputeAndRender&&window.rotComputeAndRender()">
+              <label>M2 var 30d (%)</label>
+              <input id="rot-m2var" type="number" step="0.01" placeholder="auto" oninput="window.rotComputeAndRender&&window.rotComputeAndRender()">
+              <label>Reservas var 30d (%)</label>
+              <input id="rot-resvar" type="number" step="0.01" placeholder="auto" oninput="window.rotComputeAndRender&&window.rotComputeAndRender()">
+              <label>Señal licitación</label>
+              <select id="rot-lic" onchange="window.rotComputeAndRender&&window.rotComputeAndRender()">
+                <option value="0" selected>Neutro</option>
+                <option value="1">Reciente (&lt;7d)</option>
+                <option value="-1">Lejana (&gt;21d)</option>
+              </select>
+              <label>Señal M2</label>
+              <select id="rot-m2s" onchange="window.rotComputeAndRender&&window.rotComputeAndRender()">
+                <option value="0" selected>Neutro</option>
+                <option value="1">Expansivo</option>
+                <option value="-1">Contractivo</option>
+              </select>
+            </div>
+            <textarea id="rot-nota" class="rot-nota" rows="2" placeholder="Nota opcional para el snapshot…"></textarea>
+            <button class="rot-save-btn" onclick="window.rotSaveSnap&&window.rotSaveSnap()">💾 Guardar snapshot</button>
+          </div>
+          <div class="rot-panel">
+            <h3>Historial de snapshots</h3>
+            <svg id="rot-mini-chart" width="100%" height="72"></svg>
+            <div id="rot-history-list" class="rot-history-list">
+              <div class="rot-no-data">Aún no hay snapshots guardados.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    </div><!-- /page-rotation -->
+
+    <!-- ══════════════════════════════════════════════════════
+         TASAS ARGENTINAS · Curvas de Rendimiento
+    ══════════════════════════════════════════════════════ -->
+    <div id="page-tasas" class="page">
+    <style>
+    .tas-wrap { padding:0; font-family:var(--sans); }
+    .tas-topbar { display:flex; align-items:center; justify-content:space-between; padding:14px 28px; border-bottom:1px solid var(--bdr); background:var(--surf); flex-wrap:wrap; gap:10px; }
+    .tas-topbar h1 { font-family:var(--serif); font-size:20px; font-style:italic; margin:0; }
+    .tas-topbar-meta { display:flex; align-items:center; gap:12px; }
+    .tas-ts { font-family:var(--mono); font-size:11px; color:var(--txt3); }
+    .tas-refresh-btn { background:var(--acc); color:#fff; border:none; padding:6px 14px; border-radius:4px; cursor:pointer; font-size:12px; }
+    .tas-refresh-btn:hover { opacity:.85; }
+    .tas-tabs-bar { display:flex; gap:0; border-bottom:1px solid var(--bdr); background:var(--surf); padding:0 28px; overflow-x:auto; }
+    .tas-tab { background:none; border:none; border-bottom:2px solid transparent; padding:10px 16px; cursor:pointer; font-size:13px; color:var(--txt3); white-space:nowrap; }
+    .tas-tab.active { color:var(--acc); border-bottom-color:var(--acc); font-weight:600; }
+    .tas-tab:hover { color:var(--txt); }
+    .tas-body { padding:20px 28px; display:flex; flex-direction:column; gap:16px; }
+    .tas-section { display:none; flex-direction:column; gap:16px; }
+    .tas-section.active { display:flex; }
+    /* chart container */
+    .tas-chart-wrap { background:var(--surf); border:1px solid var(--bdr); border-radius:8px; padding:16px; position:relative; }
+    .tas-chart-title { font-size:12px; font-family:var(--mono); color:var(--txt3); margin-bottom:10px; text-transform:uppercase; letter-spacing:.07em; }
+    .tas-chart-wrap canvas { max-height:320px; }
+    /* arbitrage signals */
+    .tas-arb-panel { display:flex; gap:8px; flex-wrap:wrap; }
+    .tas-arb-badge { font-size:11px; font-family:var(--mono); font-weight:600; padding:4px 10px; border-radius:4px; }
+    .tas-arb-cheap { background:#1a3a1a; color:#5db45e; }
+    .tas-arb-exp   { background:#3a1a1a; color:#e86464; }
+    .tas-arb-neu   { background:var(--surf2,#222); color:var(--txt3); }
+    /* table */
+    .tas-tbl-wrap { background:var(--surf); border:1px solid var(--bdr); border-radius:8px; overflow:hidden; }
+    .tas-tbl-wrap table { width:100%; border-collapse:collapse; font-size:12px; }
+    .tas-tbl-wrap th { padding:8px 12px; text-align:left; font-size:10px; font-family:var(--mono); text-transform:uppercase; letter-spacing:.07em; color:var(--txt3); border-bottom:1px solid var(--bdr); background:var(--surf); }
+    .tas-tbl-wrap td { padding:7px 12px; border-bottom:1px solid var(--bdr); font-family:var(--mono); }
+    .tas-tbl-wrap tr:last-child td { border-bottom:none; }
+    .tas-tbl-wrap tr:hover td { background:var(--surf2,rgba(255,255,255,.03)); }
+    .tas-badge-lecap  { background:rgba(74,144,217,.15); color:#4a90d9; padding:1px 5px; border-radius:3px; font-size:10px; }
+    .tas-badge-boncap { background:rgba(232,168,56,.15); color:#e8a838; padding:1px 5px; border-radius:3px; font-size:10px; }
+    .tas-badge-lecer  { background:rgba(155,127,212,.15); color:#9b7fd4; padding:1px 5px; border-radius:3px; font-size:10px; }
+    .tas-badge-boncer { background:rgba(93,180,94,.15); color:#5db45e; padding:1px 5px; border-radius:3px; font-size:10px; }
+    .tas-badge-dlk    { background:rgba(232,100,100,.15); color:#e86464; padding:1px 5px; border-radius:3px; font-size:10px; }
+    .tas-c-cheap { color:#5db45e; font-weight:600; }
+    .tas-c-exp   { color:#e86464; font-weight:600; }
+    .tas-no-data { text-align:center; padding:40px; color:var(--txt3); font-size:13px; }
+    </style>
+    <div class="tas-wrap">
+      <div class="tas-topbar">
+        <h1>◎ Tasas ARG · Curvas de Rendimiento</h1>
+        <div class="tas-topbar-meta">
+          <span class="tas-ts" id="tas-ts">—</span>
+          <button class="tas-refresh-btn" onclick="window.tasasRefresh&&window.tasasRefresh()">↻ Actualizar</button>
+        </div>
+      </div>
+      <div class="tas-tabs-bar">
+        <button class="tas-tab active" onclick="window.tasSwitchTab&&window.tasSwitchTab('breakeven')">Breakeven Inflación</button>
+        <button class="tas-tab" onclick="window.tasSwitchTab&&window.tasSwitchTab('fija')">Curva Tasa Fija</button>
+        <button class="tas-tab" onclick="window.tasSwitchTab&&window.tasSwitchTab('cer')">Curva CER</button>
+        <button class="tas-tab" onclick="window.tasSwitchTab&&window.tasSwitchTab('deva')">Devaluación Implícita</button>
+      </div>
+      <div class="tas-body">
+        <!-- BREAKEVEN -->
+        <div id="tas-sec-breakeven" class="tas-section active">
+          <div class="tas-chart-wrap">
+            <div class="tas-chart-title">Breakeven de inflación anual (TEA fija / TIR CER - 1)</div>
+            <canvas id="tas-ch-breakeven"></canvas>
+          </div>
+          <div class="tas-tbl-wrap">
+            <table>
+              <thead><tr>
+                <th>Bono fijo</th><th>Tipo</th><th>Días</th><th>TEA fija</th>
+                <th>Bono CER par</th><th>Días CER</th><th>TIR real CER</th>
+                <th>Breakeven inf.</th>
+              </tr></thead>
+              <tbody id="tas-tbl-breakeven"><tr><td colspan="8" class="tas-no-data">Cargando…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+        <!-- CURVA FIJA -->
+        <div id="tas-sec-fija" class="tas-section">
+          <div class="tas-arb-panel" id="tas-arb-fija"></div>
+          <div class="tas-chart-wrap">
+            <div class="tas-chart-title">Curva de tasa fija (TEA vs días)</div>
+            <canvas id="tas-ch-fija"></canvas>
+          </div>
+          <div class="tas-tbl-wrap">
+            <table>
+              <thead><tr>
+                <th>Símbolo</th><th>Tipo</th><th>Días</th><th>Precio</th>
+                <th>TEM</th><th>TEA</th><th>Tendencia log</th><th>Diferencia</th><th>Señal</th>
+              </tr></thead>
+              <tbody id="tas-tbl-fija"><tr><td colspan="9" class="tas-no-data">Cargando…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+        <!-- CURVA CER -->
+        <div id="tas-sec-cer" class="tas-section">
+          <div class="tas-chart-wrap">
+            <div class="tas-chart-title">Curva de tasa real CER (TIR real vs días)</div>
+            <canvas id="tas-ch-cer"></canvas>
+          </div>
+          <div class="tas-tbl-wrap">
+            <table>
+              <thead><tr>
+                <th>Símbolo</th><th>Tipo</th><th>Días</th><th>Precio</th>
+                <th>VT estimado</th><th>TIR real anual</th>
+              </tr></thead>
+              <tbody id="tas-tbl-cer"><tr><td colspan="6" class="tas-no-data">Cargando…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+        <!-- DEVALUACION -->
+        <div id="tas-sec-deva" class="tas-section">
+          <div class="tas-tbl-wrap">
+            <table>
+              <thead><tr>
+                <th>Bono fijo</th><th>TEA fija</th><th>Bono DLK</th><th>Días</th>
+                <th>Precio DLK</th><th>TIR DLK (USD)</th><th>Devaluación impl.</th>
+              </tr></thead>
+              <tbody id="tas-tbl-deva"><tr><td colspan="7" class="tas-no-data">Cargando…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+    </div><!-- /page-tasas -->
+
   </div><!-- /content -->
 </div><!-- /app -->
 
@@ -3367,6 +3679,14 @@ function showPage(id) {
   if (id === 'insider' && !window._insiderLoaded) {
     window._insiderLoaded = true;
     setTimeout(insiderLoad, 200);
+  }
+  if (id === 'rotation' && !window._rotInited) {
+    window._rotInited = true;
+    setTimeout(() => { if (typeof window.rotInit === 'function') window.rotInit(); }, 150);
+  }
+  if (id === 'tasas' && !window._tasasInited) {
+    window._tasasInited = true;
+    setTimeout(() => { if (typeof window.tasasInit === 'function') window.tasasInit(); }, 150);
   }
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
@@ -3724,6 +4044,13 @@ function lcProcess(raw) {
   if(prev) document.getElementById('lc-sym').value=prev;
   lcRenderTable(); lcRenderCurva();
   if(document.getElementById('lc-sym').value) lcCalc();
+  window.AR_STATE = window.AR_STATE || {};
+  window.AR_STATE.temLecapAvg = tems.length ? tems.reduce((a,b)=>a+b,0)/tems.length : null;
+  window.AR_STATE.teaLecapAvg = teas.length ? teas.reduce((a,b)=>a+b,0)/teas.length : null;
+  window.AR_STATE.lcData = LC_DATA;
+  window.AR_STATE.lecapUpdated = Date.now();
+  if (typeof window.rotSyncFromState === 'function') window.rotSyncFromState();
+  if (typeof window.tasasSync === 'function') window.tasasSync();
   compInitHorizonte();
 }
 
@@ -3917,6 +4244,19 @@ function lcProcessCer(raw) {
     if (!precio) continue;
     CER_DATA.push({sym:item.symbol, tipo:p.tipo, venc:p.venc, dias, precio, ask:item.px_ask||0});
   }
+  try {
+    const reales = CER_DATA.map(d => {
+      const vt = VT_CER_MAP[d.sym] || 100;
+      if (d.precio > 0 && d.dias > 0 && vt > 0) return (Math.pow(vt / d.precio, 365/d.dias) - 1) * 100;
+      return null;
+    }).filter(x => x != null && isFinite(x));
+    window.AR_STATE = window.AR_STATE || {};
+    window.AR_STATE.cerRealAnual = reales.length ? reales.reduce((a,b)=>a+b,0)/reales.length : null;
+    window.AR_STATE.cerData = CER_DATA;
+    window.AR_STATE.cerUpdated = Date.now();
+    if (typeof window.rotSyncFromState === 'function') window.rotSyncFromState();
+    if (typeof window.tasasSync === 'function') window.tasasSync();
+  } catch(e) {}
   compInitHorizonte();
 }
 
@@ -5546,6 +5886,25 @@ window.monLoad = async function() {
       mSet('mni-real2',rr>0?'POSITIVA':'NEGATIVA',rr>0?'up':'dn');
     }
     if(tcML&&tcmL) mSet('mni-spr','+'+((tcmL.valor-tcML.valor)/tcML.valor*100).toFixed(2)+'%','neu');
+
+    // AR_STATE para Rotation Indicator
+    window.AR_STATE = window.AR_STATE || {};
+    let _embiBps = null;
+    if (rpRes.status==='fulfilled' && rpRes.value) {
+      const _rv = rpRes.value;
+      const _raw = _rv?.valor ?? _rv?.value ?? _rv?.riesgo_pais ?? Object.values(_rv)[0];
+      if (_raw != null) _embiBps = parseFloat(_raw);
+    }
+    Object.assign(window.AR_STATE, {
+      oficial:    tcOf ?? null,
+      embi:       _embiBps,
+      ipcMensual: ipcML?.valor ?? null,
+      m2Var30d:   (m2L && m21m) ? ((m2L.valor - m21m.valor) / m21m.valor * 100) : null,
+      resVar30d:  (resL && res1m) ? ((resL.valor - res1m.valor) / res1m.valor * 100) : null,
+      reservas:   resL?.valor ?? null,
+      monUpdated: Date.now(),
+    });
+    if (typeof window.rotSyncFromState === 'function') window.rotSyncFromState();
 
     // Timestamp
     const now=new Date();
