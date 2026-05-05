@@ -7306,6 +7306,717 @@ window.usInit = function() {
 
 })(); // fin IIFE insider
 
+// ══════════════════════════════════════════════════════════
+// ROTATION INDICATOR
+// ══════════════════════════════════════════════════════════
+(function() {
+'use strict';
+
+const STORE_KEY = 'ldwm_rot_snaps_v1';
+let snaps = [];
+let autoParams = {};   // filled by rotSyncFromState
+let mepAuto = null, cclAuto = null;
+
+// ── Score engine ──────────────────────────────────────────
+function computeScores(p) {
+  const { mep, ccl, oficial, tem, cer, infl, embi, m2Var, resVar, licSig, m2Sig } = p;
+  const brecha = (mep && oficial) ? (mep - oficial) / oficial * 100 : null;
+  const temReal = (tem != null && infl != null) ? (tem - infl) : null;
+
+  // ── Fija ──
+  let sf = 50;
+  if (temReal != null) { sf += Math.min(25, temReal * 8); if (temReal < 0) sf -= 15; }
+  if (brecha != null)  { sf += brecha < 10 ? 8 : brecha > 25 ? -10 : 0; }
+  if (licSig != null)  sf += licSig * 10;
+  sf = clamp(sf, 5, 95);
+
+  // ── CER ──
+  let sc = 45;
+  if (cer != null)    { sc += Math.min(20, cer * 2); if (cer < 0) sc -= 20; }
+  if (m2Var != null && m2Var > 5) sc += 12;
+  if (infl != null && infl > 4)   sc += 10;
+  if (m2Sig != null)  sc += m2Sig * 8;
+  sc = clamp(sc, 5, 95);
+
+  // ── Dólar ──
+  let sd = 30;
+  if (brecha != null) { sd += brecha > 25 ? 22 : brecha > 12 ? 12 : brecha < 5 ? -12 : 0; }
+  if (resVar != null && resVar < -5) sd += 18;
+  if (embi != null)   sd += embi > 1200 ? 14 : embi > 800 ? 6 : 0;
+  sd = clamp(sd, 5, 95);
+
+  // ── MM / liquidez ──
+  let sm = 35;
+  if (temReal != null && temReal < 0)  sm += 18;
+  if (brecha != null && brecha < 8)    sm += 10;
+  if (embi != null && embi > 1200)     sm -= 8;
+  sm = clamp(sm, 5, 95);
+
+  return { fija: sf, cer: sc, dolar: sd, mm: sm };
+}
+
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+function scoresToAlloc(s) {
+  const total = s.fija + s.cer + s.dolar + s.mm;
+  return {
+    fija:  Math.round(s.fija  / total * 100),
+    cer:   Math.round(s.cer   / total * 100),
+    dolar: Math.round(s.dolar / total * 100),
+    mm:    Math.round(s.mm    / total * 100),
+  };
+}
+
+function scoreSignal(score) {
+  if (score >= 75) return { cls:'rot-sig-strong-buy', label:'SOBREPONDERAR' };
+  if (score >= 60) return { cls:'rot-sig-buy',        label:'AUMENTAR' };
+  if (score >= 45) return { cls:'rot-sig-neutral',    label:'NEUTRO' };
+  if (score >= 32) return { cls:'rot-sig-reduce',     label:'REDUCIR' };
+  return              { cls:'rot-sig-avoid',       label:'SUBPONDERAR' };
+}
+
+// ── Read inputs ───────────────────────────────────────────
+function readParams() {
+  const g = id => { const el = document.getElementById(id); return el ? parseFloat(el.value) || null : null; };
+  const gs = id => { const el = document.getElementById(id); return el ? parseInt(el.value) : 0; };
+  const mep = g('rot-mep') || mepAuto;
+  const ccl = g('rot-ccl') || cclAuto;
+  const oficial = g('rot-oficial') || autoParams.oficial || null;
+  return {
+    mep, ccl, oficial,
+    tem:    g('rot-tem')    ?? autoParams.temLecapAvg ?? null,
+    cer:    g('rot-cer')    ?? autoParams.cerRealAnual ?? null,
+    infl:   g('rot-infl')   ?? autoParams.ipcMensual ?? null,
+    embi:   g('rot-embi')   ?? autoParams.embi ?? null,
+    m2Var:  g('rot-m2var')  ?? autoParams.m2Var30d ?? null,
+    resVar: g('rot-resvar') ?? autoParams.resVar30d ?? null,
+    licSig: gs('rot-lic'),
+    m2Sig:  gs('rot-m2s'),
+  };
+}
+
+// ── Render ────────────────────────────────────────────────
+function renderAllocBar(alloc) {
+  const bar = document.getElementById('rot-alloc-bar');
+  const leg = document.getElementById('rot-alloc-legend');
+  if (!bar) return;
+  const defs = [
+    { key:'fija',  label:'Tasa Fija', color:'var(--col-fija,#4a90d9)' },
+    { key:'cer',   label:'CER',       color:'var(--col-cer,#e8a838)' },
+    { key:'dolar', label:'Dólar',     color:'var(--col-dolar,#5db45e)' },
+    { key:'mm',    label:'Liquidez',  color:'var(--col-mm,#9b7fd4)' },
+  ];
+  bar.innerHTML = defs.map(d =>
+    `<div class="rot-seg rot-seg-${d.key}" style="flex:${alloc[d.key]}">
+       <span class="rot-seg-label">${d.label} ${alloc[d.key]}%</span>
+     </div>`
+  ).join('');
+  if (leg) leg.innerHTML = defs.map(d =>
+    `<div class="rot-legend-item">
+       <div class="rot-legend-dot" style="background:${d.color}"></div>
+       <span>${d.label}</span>
+       <span class="rot-legend-pct">${alloc[d.key]}%</span>
+     </div>`
+  ).join('');
+}
+
+function renderScoreCards(scores, alloc) {
+  const wrap = document.getElementById('rot-score-cards');
+  if (!wrap) return;
+  const defs = [
+    { key:'fija',  label:'Tasa Fija',    cls:'fija' },
+    { key:'cer',   label:'CER / Infl.',  cls:'cer' },
+    { key:'dolar', label:'Dólar',        cls:'dolar' },
+    { key:'mm',    label:'Liquidez',     cls:'mm' },
+  ];
+  wrap.innerHTML = defs.map(d => {
+    const sig = scoreSignal(scores[d.key]);
+    return `<div class="rot-score-card ${d.cls}">
+      <div class="rot-card-label">${d.label}</div>
+      <div class="rot-card-score">${Math.round(scores[d.key])}</div>
+      <div class="rot-card-signal ${sig.cls}">${sig.label}</div>
+      <div class="rot-card-alloc">${alloc[d.key]}%</div>
+    </div>`;
+  }).join('');
+}
+
+function renderFactors(p) {
+  const fmt = (v, dec=1, suf='') => v != null ? v.toFixed(dec) + suf : '—';
+  const fmtPct = (v, dec=1) => v != null ? (v >= 0 ? '+' : '') + v.toFixed(dec) + '%' : '—';
+  const col = (v, pos='c-green', neg='c-red') => v == null ? '' : v > 0 ? pos : v < 0 ? neg : '';
+
+  const brecha = (p.mep && p.oficial) ? (p.mep - p.oficial) / p.oficial * 100 : null;
+  const temReal = (p.tem != null && p.infl != null) ? p.tem - p.infl : null;
+
+  const setT = (id, v) => { const el = document.getElementById(id); if(el) el.textContent = v; };
+  setT('rf-mep',    p.mep ? '$ ' + p.mep.toFixed(0) : '—');
+  setT('rf-brecha', brecha != null ? 'brecha: ' + brecha.toFixed(1) + '%' : 'brecha: —');
+  setT('rf-ccl',    p.ccl ? '$ ' + p.ccl.toFixed(0) : '—');
+  setT('rf-tem',    fmt(p.tem, 3, '% TEM'));
+  setT('rf-tem-real', temReal != null ? 'TEM real: ' + fmtPct(temReal, 2) : 'TEM real: —');
+  setT('rf-cer',    fmt(p.cer, 2, '% anual'));
+  setT('rf-infl',   fmt(p.infl, 2, '% mensual'));
+  setT('rf-infldir', p.infl != null ? (p.infl > 5 ? '⚠ inflación alta' : p.infl < 2 ? '✓ inflación baja' : 'moderada') : '—');
+  setT('rf-embi',   p.embi != null ? p.embi.toFixed(0) + ' bps' : '—');
+  setT('rf-embi-sub', p.embi != null ? (p.embi > 1200 ? 'riesgo elevado' : p.embi > 800 ? 'riesgo moderado' : 'riesgo bajo') : 'riesgo país');
+  setT('rf-m2',     fmtPct(p.m2Var));
+  setT('rf-res',    fmtPct(p.resVar));
+  setT('rf-oficial', p.oficial ? '$ ' + p.oficial.toFixed(2) : '—');
+}
+
+function renderRotClock() {
+  const el = document.getElementById('rot-clock');
+  if (el) el.textContent = new Date().toLocaleString('es-AR',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
+}
+
+// ── Main render ───────────────────────────────────────────
+function rotRender() {
+  const p = readParams();
+  const scores = computeScores(p);
+  const alloc = scoresToAlloc(scores);
+  renderAllocBar(alloc);
+  renderScoreCards(scores, alloc);
+  renderFactors(p);
+  renderRotClock();
+  syncInputsFromAuto(p);
+}
+window.rotComputeAndRender = rotRender;
+
+function syncInputsFromAuto(p) {
+  const setV = (id, v, fmt) => {
+    const el = document.getElementById(id);
+    if (!el || el.value) return;
+    if (v != null) el.placeholder = fmt ? fmt(v) : v.toFixed(2);
+  };
+  setV('rot-oficial', p.oficial, v => v.toFixed(2));
+  const bEl = document.getElementById('rot-brecha');
+  if (bEl && p.mep && p.oficial) bEl.value = ((p.mep - p.oficial)/p.oficial*100).toFixed(1) + '%';
+  const ofEl = document.getElementById('rot-oficial');
+  if (ofEl && p.oficial) ofEl.value = p.oficial.toFixed(2);
+}
+
+// ── Fetch MEP/CCL from dolarapi ───────────────────────────
+async function rotFetch() {
+  try {
+    const [rMep, rCcl] = await Promise.allSettled([
+      fetch('https://dolarapi.com/v1/dolares/bolsa').then(r => r.ok ? r.json() : null),
+      fetch('https://dolarapi.com/v1/dolares/contadoconliqui').then(r => r.ok ? r.json() : null),
+    ]);
+    if (rMep.status === 'fulfilled' && rMep.value) {
+      mepAuto = rMep.value.venta ?? rMep.value.compra ?? null;
+      const el = document.getElementById('rot-mep');
+      if (el && !el.value && mepAuto) { el.placeholder = mepAuto.toFixed(0); }
+      const src = document.getElementById('rot-mep-src');
+      if (src) src.textContent = 'auto';
+    }
+    if (rCcl.status === 'fulfilled' && rCcl.value) {
+      cclAuto = rCcl.value.venta ?? rCcl.value.compra ?? null;
+      const el = document.getElementById('rot-ccl');
+      if (el && !el.value && cclAuto) { el.placeholder = cclAuto.toFixed(0); }
+      const src = document.getElementById('rot-ccl-src');
+      if (src) src.textContent = 'auto';
+    }
+  } catch(e) { /* silencioso */ }
+  rotRender();
+}
+
+// ── Sync from AR_STATE ────────────────────────────────────
+window.rotSyncFromState = function() {
+  const s = window.AR_STATE;
+  if (!s) return;
+  Object.assign(autoParams, {
+    oficial:      s.oficial      ?? autoParams.oficial,
+    embi:         s.embi         ?? autoParams.embi,
+    ipcMensual:   s.ipcMensual   ?? autoParams.ipcMensual,
+    m2Var30d:     s.m2Var30d     ?? autoParams.m2Var30d,
+    resVar30d:    s.resVar30d    ?? autoParams.resVar30d,
+    temLecapAvg:  s.temLecapAvg  ?? autoParams.temLecapAvg,
+    cerRealAnual: s.cerRealAnual ?? autoParams.cerRealAnual,
+  });
+  if (document.getElementById('page-rotation')?.classList.contains('active')) rotRender();
+};
+
+// ── Snapshots ─────────────────────────────────────────────
+function loadSnaps() {
+  try { snaps = JSON.parse(localStorage.getItem(STORE_KEY) || '[]'); } catch { snaps = []; }
+}
+function saveSnaps() { localStorage.setItem(STORE_KEY, JSON.stringify(snaps.slice(0,50))); }
+
+window.rotSaveSnap = function() {
+  const p = readParams();
+  const scores = computeScores(p);
+  const alloc = scoresToAlloc(scores);
+  const nota = document.getElementById('rot-nota')?.value?.trim() || '';
+  snaps.unshift({ id: Date.now(), date: new Date().toISOString(), p, scores, alloc, nota });
+  saveSnaps();
+  renderHistory();
+  document.getElementById('rot-nota').value = '';
+  if (typeof toast === 'function') toast('Snapshot guardado', 'success', 2000);
+};
+
+window.rotDeleteSnap = function(id) {
+  snaps = snaps.filter(s => s.id !== id);
+  saveSnaps();
+  renderHistory();
+};
+
+function renderHistory() {
+  const wrap = document.getElementById('rot-history-list');
+  if (!wrap) return;
+  if (!snaps.length) {
+    wrap.innerHTML = '<div class="rot-no-data">Aún no hay snapshots guardados.</div>';
+    renderMiniChart([]);
+    return;
+  }
+  const COLORS = { fija:'#4a90d9', cer:'#e8a838', dolar:'#5db45e', mm:'#9b7fd4' };
+  wrap.innerHTML = snaps.slice(0, 20).map(s => {
+    const d = new Date(s.date);
+    const dateStr = d.toLocaleDateString('es-AR',{day:'2-digit',month:'2-digit'}) + ' ' + d.toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'});
+    const pills = Object.entries(s.alloc).map(([k,v]) =>
+      `<span class="rot-snap-pill" style="background:${COLORS[k]}22;color:${COLORS[k]}">${k.toUpperCase()} ${v}%</span>`
+    ).join('');
+    return `<div class="rot-snap">
+      <button class="rot-snap-del" onclick="window.rotDeleteSnap(${s.id})" title="Eliminar">✕</button>
+      <div class="rot-snap-date">${dateStr}</div>
+      <div class="rot-snap-alloc">${pills}</div>
+      ${s.nota ? `<div class="rot-snap-nota">"${s.nota}"</div>` : ''}
+    </div>`;
+  }).join('');
+  renderMiniChart(snaps.slice(0, 20).reverse());
+}
+
+function renderMiniChart(data) {
+  const svg = document.getElementById('rot-mini-chart');
+  if (!svg) return;
+  if (data.length < 2) { svg.innerHTML = ''; return; }
+  const W = svg.clientWidth || 300, H = 72;
+  const COLORS = { fija:'#4a90d9', cer:'#e8a838', dolar:'#5db45e', mm:'#9b7fd4' };
+  const keys = ['fija','cer','dolar','mm'];
+  const xStep = W / (data.length - 1);
+  let paths = '';
+  keys.forEach(k => {
+    const pts = data.map((s,i) => `${i*xStep},${H - (s.alloc[k]/100)*H*0.85 - 4}`).join(' ');
+    paths += `<polyline points="${pts}" fill="none" stroke="${COLORS[k]}" stroke-width="1.5" opacity="0.8"/>`;
+  });
+  svg.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">${paths}</svg>`;
+}
+
+// ── Init ──────────────────────────────────────────────────
+window.rotInit = function() {
+  loadSnaps();
+  renderHistory();
+  rotFetch(); // fetches MEP/CCL and then renders
+  // Also sync AR_STATE if already loaded
+  if (window.AR_STATE) window.rotSyncFromState();
+};
+
+window.rotRefresh = function() {
+  rotFetch();
+};
+
+})(); // fin IIFE rotation
+
+// ══════════════════════════════════════════════════════════
+// TASAS ARGENTINAS
+// ══════════════════════════════════════════════════════════
+(function() {
+'use strict';
+
+let DLK_DATA = [];
+let tasCharts = {};
+let currentTab = 'breakeven';
+
+// ── Log regression ────────────────────────────────────────
+function logRegress(pts) {
+  // y = a + b * ln(x)
+  const n = pts.length;
+  if (n < 2) return { a: 0, b: 0, predict: () => 0 };
+  let sumLx=0, sumY=0, sumLxLx=0, sumLxY=0;
+  pts.forEach(([x, y]) => {
+    const lx = Math.log(x);
+    sumLx += lx; sumY += y; sumLxLx += lx*lx; sumLxY += lx*y;
+  });
+  const b = (n*sumLxY - sumLx*sumY) / (n*sumLxLx - sumLx*sumLx);
+  const a = (sumY - b*sumLx) / n;
+  return { a, b, predict: x => a + b * Math.log(x) };
+}
+
+// ── CER real rate ─────────────────────────────────────────
+function cerTirReal(precio, vtEst, dias) {
+  if (precio <= 0 || dias <= 0 || vtEst <= 0) return null;
+  const v = (Math.pow(vtEst / precio, 365 / dias) - 1) * 100;
+  return isFinite(v) ? v : null;
+}
+
+// ── Pair by nearest duration ──────────────────────────────
+function nearestCer(dias, cerBonds) {
+  if (!cerBonds.length) return null;
+  return cerBonds.reduce((best, c) =>
+    Math.abs(c.dias - dias) < Math.abs(best.dias - dias) ? c : best
+  );
+}
+
+// ── Render Breakeven ──────────────────────────────────────
+function renderBreakeven(lcData, cerData) {
+  const tbody = document.getElementById('tas-tbl-breakeven');
+  if (!lcData.length || !cerData.length) {
+    if (tbody) tbody.innerHTML = '<tr><td colspan="8" class="tas-no-data">Cargá los datos desde la pestaña LECAPs primero.</td></tr>';
+    return;
+  }
+
+  // Enrich CER with TIR real
+  const VT_MAP = (window.VT_CER_MAP) || {};
+  const cerEnriched = cerData.map(c => {
+    const vt = VT_MAP[c.sym] || 100;
+    const tir = cerTirReal(c.precio, vt, c.dias);
+    return { ...c, tir, vt };
+  }).filter(c => c.tir != null);
+
+  const rows = [];
+  lcData.filter(d => d.tea != null && d.dias > 0).forEach(d => {
+    const par = nearestCer(d.dias, cerEnriched);
+    if (!par) return;
+    const breakeven = ((1 + d.tea/100) / (1 + par.tir/100) - 1) * 100;
+    if (!isFinite(breakeven)) return;
+    rows.push({ d, par, breakeven });
+  });
+
+  rows.sort((a, b) => a.d.dias - b.d.dias);
+
+  if (tbody) {
+    tbody.innerHTML = rows.map(r => {
+      const bColor = r.breakeven > 80 ? 'color:#e86464' : r.breakeven < 30 ? 'color:#5db45e' : 'color:var(--txt,#e8f0fe)';
+      return `<tr>
+        <td><span class="tas-badge-${r.d.tipo.toLowerCase()}">${r.d.sym}</span></td>
+        <td>${r.d.tipo}</td>
+        <td>${r.d.dias}</td>
+        <td>${r.d.tea.toFixed(2)}%</td>
+        <td><span class="tas-badge-${r.par.tipo.toLowerCase()}">${r.par.sym}</span></td>
+        <td>${r.par.dias}</td>
+        <td>${r.par.tir.toFixed(2)}%</td>
+        <td style="${bColor};font-weight:600;font-family:var(--mono)">${r.breakeven.toFixed(1)}%</td>
+      </tr>`;
+    }).join('') || '<tr><td colspan="8" class="tas-no-data">Sin datos suficientes.</td></tr>';
+  }
+
+  // Chart
+  const ctx = document.getElementById('tas-ch-breakeven');
+  if (!ctx) return;
+  if (tasCharts.breakeven) { tasCharts.breakeven.destroy(); delete tasCharts.breakeven; }
+  if (typeof Chart === 'undefined') return;
+
+  tasCharts.breakeven = new Chart(ctx, {
+    type: 'scatter',
+    data: {
+      datasets: [{
+        label: 'Breakeven inflación',
+        data: rows.map(r => ({ x: r.d.dias / 365, y: r.breakeven })),
+        backgroundColor: rows.map(r => r.d.tipo === 'LECAP' ? 'rgba(74,144,217,0.7)' : 'rgba(232,168,56,0.7)'),
+        pointRadius: 6,
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: ctx => {
+              const r = rows[ctx.dataIndex];
+              return `${r.d.sym} vs ${r.par.sym}: ${r.breakeven.toFixed(1)}% infl. impl.`;
+            }
+          }
+        }
+      },
+      scales: {
+        x: { title: { display: true, text: 'Años al vencimiento' }, ticks: { color: 'rgba(232,240,254,0.5)' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+        y: { title: { display: true, text: 'Breakeven inflación anual (%)' }, ticks: { color: 'rgba(232,240,254,0.5)' }, grid: { color: 'rgba(255,255,255,0.05)' } }
+      }
+    }
+  });
+}
+
+// ── Render Curva Fija ─────────────────────────────────────
+function renderFija(lcData) {
+  const tbody = document.getElementById('tas-tbl-fija');
+  const arbPanel = document.getElementById('tas-arb-fija');
+
+  if (!lcData.length) {
+    if (tbody) tbody.innerHTML = '<tr><td colspan="9" class="tas-no-data">Cargá los datos desde la pestaña LECAPs primero.</td></tr>';
+    return;
+  }
+
+  const pts = lcData.filter(d => d.tea != null && d.dias > 0).sort((a,b) => a.dias - b.dias);
+  const reg = logRegress(pts.map(d => [d.dias, d.tea]));
+  const THRESHOLD = 1.5;
+
+  if (tbody) {
+    tbody.innerHTML = pts.map(d => {
+      const trend = reg.predict(d.dias);
+      const diff = d.tea - trend;
+      const isCheap = diff > THRESHOLD, isExp = diff < -THRESHOLD;
+      const diffStr = (diff >= 0 ? '+' : '') + diff.toFixed(2) + '%';
+      const sigBadge = isCheap
+        ? '<span class="tas-arb-badge tas-arb-cheap">BARATO</span>'
+        : isExp ? '<span class="tas-arb-badge tas-arb-exp">CARO</span>'
+        : '<span class="tas-arb-badge tas-arb-neu">JUSTO</span>';
+      return `<tr>
+        <td><span class="tas-badge-${d.tipo.toLowerCase()}">${d.sym}</span></td>
+        <td>${d.tipo}</td>
+        <td>${d.dias}</td>
+        <td>${d.precio.toFixed(2)}</td>
+        <td>${d.tem != null ? d.tem.toFixed(3)+'%' : '—'}</td>
+        <td>${d.tea.toFixed(2)}%</td>
+        <td>${trend.toFixed(2)}%</td>
+        <td class="${isCheap ? 'tas-c-cheap' : isExp ? 'tas-c-exp' : ''}">${diffStr}</td>
+        <td>${sigBadge}</td>
+      </tr>`;
+    }).join('') || '<tr><td colspan="9" class="tas-no-data">Sin datos.</td></tr>';
+  }
+
+  if (arbPanel) {
+    const cheap = pts.filter(d => d.tea - reg.predict(d.dias) > THRESHOLD);
+    const exp   = pts.filter(d => d.tea - reg.predict(d.dias) < -THRESHOLD);
+    arbPanel.innerHTML =
+      cheap.map(d => `<span class="tas-arb-badge tas-arb-cheap">${d.sym} +${(d.tea-reg.predict(d.dias)).toFixed(1)}%</span>`).join('') +
+      exp.map(d   => `<span class="tas-arb-badge tas-arb-exp">${d.sym} ${(d.tea-reg.predict(d.dias)).toFixed(1)}%</span>`).join('') +
+      ((!cheap.length && !exp.length) ? '<span class="tas-arb-badge tas-arb-neu">Sin señales de arbitraje</span>' : '');
+  }
+
+  const ctx = document.getElementById('tas-ch-fija');
+  if (!ctx) return;
+  if (tasCharts.fija) { tasCharts.fija.destroy(); delete tasCharts.fija; }
+  if (typeof Chart === 'undefined') return;
+
+  const trendLine = (() => {
+    const minD = Math.min(...pts.map(d=>d.dias)), maxD = Math.max(...pts.map(d=>d.dias));
+    const steps = 40;
+    return Array.from({length:steps+1}, (_,i) => {
+      const x = minD + (maxD-minD)*i/steps;
+      return {x, y: reg.predict(x)};
+    });
+  })();
+
+  tasCharts.fija = new Chart(ctx, {
+    type: 'scatter',
+    data: {
+      datasets: [
+        {
+          label: 'Bonos',
+          data: pts.map(d => ({ x: d.dias, y: d.tea, sym: d.sym })),
+          backgroundColor: pts.map(d => {
+            const diff = d.tea - reg.predict(d.dias);
+            return diff > THRESHOLD ? 'rgba(93,180,94,0.8)' : diff < -THRESHOLD ? 'rgba(232,100,100,0.8)' : 'rgba(74,144,217,0.7)';
+          }),
+          pointRadius: 7,
+        },
+        {
+          label: 'Tendencia log',
+          data: trendLine,
+          type: 'line',
+          borderColor: 'rgba(201,168,76,0.6)',
+          backgroundColor: 'transparent',
+          borderWidth: 1.5,
+          borderDash: [4,3],
+          pointRadius: 0,
+          tension: 0.4,
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { labels: { color: 'rgba(232,240,254,0.5)', font: { size: 11 } } },
+        tooltip: { callbacks: { label: c => c.raw.sym ? `${c.raw.sym}: ${c.raw.y.toFixed(2)}% TEA` : `Tendencia: ${c.raw.y.toFixed(2)}%` } }
+      },
+      scales: {
+        x: { title: { display: true, text: 'Días al vencimiento' }, ticks: { color: 'rgba(232,240,254,0.5)' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+        y: { title: { display: true, text: 'TEA (%)' }, ticks: { color: 'rgba(232,240,254,0.5)' }, grid: { color: 'rgba(255,255,255,0.05)' } }
+      }
+    }
+  });
+}
+
+// ── Render Curva CER ──────────────────────────────────────
+function renderCer(cerData) {
+  const tbody = document.getElementById('tas-tbl-cer');
+  if (!cerData.length) {
+    if (tbody) tbody.innerHTML = '<tr><td colspan="6" class="tas-no-data">Cargá los datos desde la pestaña LECAPs primero.</td></tr>';
+    return;
+  }
+
+  const VT_MAP = window.VT_CER_MAP || {};
+  const pts = cerData.map(c => {
+    const vt = VT_MAP[c.sym] || 100;
+    const tir = cerTirReal(c.precio, vt, c.dias);
+    return { ...c, vt, tir };
+  }).filter(c => c.tir != null).sort((a,b) => a.dias - b.dias);
+
+  if (tbody) {
+    tbody.innerHTML = pts.map(d => `<tr>
+      <td><span class="tas-badge-${d.tipo.toLowerCase()}">${d.sym}</span></td>
+      <td>${d.tipo}</td>
+      <td>${d.dias}</td>
+      <td>${d.precio.toFixed(2)}</td>
+      <td>${d.vt.toFixed(2)}</td>
+      <td style="font-family:var(--mono);font-weight:600">${d.tir.toFixed(2)}%</td>
+    </tr>`).join('') || '<tr><td colspan="6" class="tas-no-data">Sin datos.</td></tr>';
+  }
+
+  const ctx = document.getElementById('tas-ch-cer');
+  if (!ctx) return;
+  if (tasCharts.cer) { tasCharts.cer.destroy(); delete tasCharts.cer; }
+  if (typeof Chart === 'undefined') return;
+
+  tasCharts.cer = new Chart(ctx, {
+    type: 'scatter',
+    data: {
+      datasets: [{
+        label: 'TIR real CER',
+        data: pts.map(d => ({ x: d.dias, y: d.tir, sym: d.sym })),
+        backgroundColor: 'rgba(155,127,212,0.75)',
+        pointRadius: 7,
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: c => `${c.raw.sym}: ${c.raw.y.toFixed(2)}% TIR real` } }
+      },
+      scales: {
+        x: { title: { display: true, text: 'Días al vencimiento' }, ticks: { color: 'rgba(232,240,254,0.5)' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+        y: { title: { display: true, text: 'TIR real anual (%)' }, ticks: { color: 'rgba(232,240,254,0.5)' }, grid: { color: 'rgba(255,255,255,0.05)' } }
+      }
+    }
+  });
+}
+
+// ── Render Devaluación ────────────────────────────────────
+function renderDeva(lcData, dlkData) {
+  const tbody = document.getElementById('tas-tbl-deva');
+  const oficial = window.AR_STATE?.oficial || null;
+
+  if (!dlkData.length) {
+    if (tbody) tbody.innerHTML = '<tr><td colspan="7" class="tas-no-data">' +
+      (oficial ? 'Sin datos de bonos DLK. Recargá los datos.' : 'Cargá Monitor Monetario para obtener el TC oficial.') +
+      '</td></tr>';
+    return;
+  }
+  if (!oficial) {
+    if (tbody) tbody.innerHTML = '<tr><td colspan="7" class="tas-no-data">Cargá Monitor Monetario para obtener el TC oficial.</td></tr>';
+    return;
+  }
+
+  const rows = [];
+  dlkData.forEach(dlk => {
+    if (!dlk.dias || dlk.dias <= 0 || !dlk.precio) return;
+    const usdPrice = dlk.precio / oficial;
+    const tirUsd = (Math.pow(100 / usdPrice, 365 / dlk.dias) - 1) * 100;
+    if (!isFinite(tirUsd)) return;
+
+    lcData.filter(d => d.tea != null && Math.abs(d.dias - dlk.dias) <= 60).forEach(d => {
+      const deva = ((1 + d.tea/100) / (1 + tirUsd/100) - 1) * 100;
+      if (!isFinite(deva)) return;
+      rows.push({ lc: d, dlk, tirUsd, deva });
+    });
+  });
+
+  rows.sort((a, b) => a.dlk.dias - b.dlk.dias);
+
+  if (tbody) {
+    tbody.innerHTML = rows.map(r => {
+      const dColor = r.deva > 40 ? 'color:#e86464' : r.deva < 10 ? 'color:#5db45e' : 'color:var(--txt,#e8f0fe)';
+      return `<tr>
+        <td><span class="tas-badge-${r.lc.tipo.toLowerCase()}">${r.lc.sym}</span></td>
+        <td>${r.lc.tea.toFixed(2)}%</td>
+        <td><span class="tas-badge-dlk">${r.dlk.sym}</span></td>
+        <td>${r.dlk.dias}</td>
+        <td>${r.dlk.precio.toFixed(2)}</td>
+        <td>${r.tirUsd.toFixed(2)}%</td>
+        <td style="${dColor};font-weight:600;font-family:var(--mono)">${r.deva.toFixed(1)}%</td>
+      </tr>`;
+    }).join('') || '<tr><td colspan="7" class="tas-no-data">Sin pares de duración similar encontrados.</td></tr>';
+  }
+}
+
+// ── Fetch DLK bonds ───────────────────────────────────────
+async function fetchDLK() {
+  try {
+    const raw = await fetch('https://data912.com/live/arg_bonds').then(r => r.ok ? r.json() : []);
+    DLK_DATA = raw.filter(b => b.symbol && b.symbol.startsWith('TZV')).map(b => {
+      const dias = (() => {
+        const sym = b.symbol;
+        if (sym === 'TZV26') return Math.round((new Date(2026,5,30) - new Date()) / 86400000);
+        if (sym === 'TZV27') return Math.round((new Date(2027,5,30) - new Date()) / 86400000);
+        return null;
+      })();
+      return { sym: b.symbol, precio: b.c || b.px_bid || 0, dias };
+    }).filter(d => d.dias && d.dias > 0 && d.precio > 0);
+  } catch(e) { DLK_DATA = []; }
+}
+
+// ── Sync from global data ─────────────────────────────────
+window.tasasSync = function() {
+  if (!document.getElementById('page-tasas')?.classList.contains('active')) return;
+  tasasRenderAll();
+};
+
+function tasasRenderAll() {
+  const lc  = (window.AR_STATE?.lcData)  || window.LC_DATA  || [];
+  const cer = (window.AR_STATE?.cerData) || window.CER_DATA || [];
+  renderBreakeven(lc, cer);
+  renderFija(lc);
+  renderCer(cer);
+  renderDeva(lc, DLK_DATA);
+  const ts = document.getElementById('tas-ts');
+  if (ts) ts.textContent = 'Act: ' + new Date().toLocaleTimeString('es-AR');
+}
+
+// ── Tab switching ─────────────────────────────────────────
+window.tasSwitchTab = function(tab) {
+  currentTab = tab;
+  document.querySelectorAll('.tas-section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.tas-tab').forEach(b => b.classList.remove('active'));
+  const sec = document.getElementById('tas-sec-' + tab);
+  if (sec) sec.classList.add('active');
+  const tabs = document.querySelectorAll('.tas-tab');
+  const idx = ['breakeven','fija','cer','deva'].indexOf(tab);
+  if (tabs[idx]) tabs[idx].classList.add('active');
+};
+
+// ── Refresh ───────────────────────────────────────────────
+window.tasasRefresh = async function() {
+  const ts = document.getElementById('tas-ts');
+  if (ts) ts.textContent = 'Cargando…';
+  await fetchDLK();
+  // Also trigger lcLoad if data not yet loaded
+  if ((!window.LC_DATA || !window.LC_DATA.length) && typeof window.lcLoad === 'function') {
+    await window.lcLoad();
+  } else {
+    tasasRenderAll();
+  }
+};
+
+// ── Init ──────────────────────────────────────────────────
+window.tasasInit = async function() {
+  await fetchDLK();
+  const lc = window.LC_DATA || [];
+  if (lc.length) {
+    tasasRenderAll();
+  } else {
+    // Prompt load from LECAPs tab
+    ['tas-tbl-breakeven','tas-tbl-fija','tas-tbl-cer','tas-tbl-deva'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = `<tr><td colspan="9" class="tas-no-data">
+        Hacé click en <strong>↻ Actualizar</strong> para cargar datos, o visitá la pestaña LECAPs primero.
+      </td></tr>`;
+    });
+  }
+};
+
+})(); // fin IIFE tasas
+
 </script>
 </body>
 </html>
